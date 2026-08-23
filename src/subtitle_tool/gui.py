@@ -67,7 +67,6 @@ class Worker(QThread):
 
     progress = Signal(int, str, float)
     finished_file = Signal(int, object, object)  # 行号, Result, 异常
-    note = Signal(str, object)  # (提示, 进度)；进度为 None 表示只是一条消息
     load_failed = Signal(object)
     all_done = Signal(object)  # 把加载好的 Engine 交还主线程复用
 
@@ -77,12 +76,34 @@ class Worker(QThread):
         self.engine = engine
         self.engine_factory = engine_factory  # 收一个提示回调，返回加载好的 Engine
         self.cancel = threading.Event()
+        self._notes = []  # 攒下的一次性提示
+        self._progress = None  # 最新的下载进度
+        self._lock = threading.Lock()
+
+    def note(self, message, fraction):
+        """模型下载的提示与进度。
+
+        这个回调会从 huggingface_hub / hf_xet 自己的线程里被调到，那些线程 Qt 从没
+        见过。所以不在这儿碰 Qt（信号也不发），只把状态记下来，界面用定时器自己来取。
+        """
+        with self._lock:
+            if fraction is None:
+                self._notes.append(message)
+            else:
+                self._progress = (message, fraction)
+
+    def take_notes(self):
+        """界面线程取走攒下的提示和最新进度。"""
+        with self._lock:
+            notes, self._notes = self._notes, []
+            progress, self._progress = self._progress, None
+        return notes, progress
 
     def run(self):
         try:
             if self.engine is None:
                 # 在这个线程里加载，下载/初始化模型都不卡界面
-                self.engine = self.engine_factory(self.note.emit)
+                self.engine = self.engine_factory(self.note)
         except Exception as error:
             # 模型下载/加载失败（断网、磁盘不够）。不报出来的话线程直接死掉，
             # all_done 永远不发，界面会一直卡在「运行中」，开始按钮再也点不动
@@ -155,6 +176,12 @@ class MainWindow(QWidget):
         for render in self._texts:
             render()
 
+    # ---------- 别让异常掀桌子 ----------
+
+    def _guarded(self, slot):
+        """接信号前包一层，异常写进日志框，别让 PySide6 把进程结束掉。"""
+        return runtime.guarded(slot, self._log)
+
     # ---------- 界面 ----------
 
     def _build(self):
@@ -182,13 +209,13 @@ class MainWindow(QWidget):
         remove = QAction(self.table)
         self._text(remove.setText, "移除选中")
         remove.setShortcut(Qt.Key_Delete)
-        remove.triggered.connect(self._remove_selected)
+        remove.triggered.connect(self._guarded(self._remove_selected))
         self.table.addAction(remove)
         self.table.setContextMenuPolicy(Qt.ActionsContextMenu)
 
         add = QPushButton()
         self._text(add.setText, "添加文件…")
-        add.clicked.connect(self._pick_files)
+        add.clicked.connect(self._guarded(self._pick_files))
         clear = QPushButton()
         self._text(clear.setText, "清空")
         clear.clicked.connect(lambda: self.table.setRowCount(0))
@@ -270,7 +297,7 @@ class MainWindow(QWidget):
 
         self.ui_language = QComboBox()
         self._choices(self.ui_language, self._language_options, initial=saved.language)
-        self.ui_language.currentIndexChanged.connect(self._on_language_changed)
+        self.ui_language.currentIndexChanged.connect(self._guarded(self._on_language_changed))
         form.addRow(self._label("界面语言"), self.ui_language)
 
         self.formats = {}
@@ -287,7 +314,7 @@ class MainWindow(QWidget):
         self._text(self.output_dir.setPlaceholderText, "留空则与视频同目录")
         browse = QPushButton()
         self._text(browse.setText, "浏览…")
-        browse.clicked.connect(self._pick_output_dir)
+        browse.clicked.connect(self._guarded(self._pick_output_dir))
         output_row = QHBoxLayout()
         output_row.addWidget(self.output_dir, 1)
         output_row.addWidget(browse)
@@ -333,18 +360,22 @@ class MainWindow(QWidget):
         self.start = QPushButton()
         self._text(self.start.setText, "开始生成")
         self.start.setMinimumHeight(36)
-        self.start.clicked.connect(self._start)
+        self.start.clicked.connect(self._guarded(self._start))
         self.stop = QPushButton()
         self._text(self.stop.setText, "取消")
         self.stop.setMinimumHeight(36)
         self.stop.setEnabled(False)
-        self.stop.clicked.connect(self._stop)
+        self.stop.clicked.connect(self._guarded(self._stop))
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
         self._live(self._reset_bar)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
+        # 下载线程不碰 Qt，界面这边定时来取
+        self.notes = QTimer(self)
+        self.notes.setInterval(200)
+        self.notes.timeout.connect(self._guarded(self._drain_notes))
 
         row = QHBoxLayout()
         row.addWidget(self.bar, 1)
@@ -363,7 +394,8 @@ class MainWindow(QWidget):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        self._add_files([url.toLocalFile() for url in event.mimeData().urls()])
+        # 重写的虚函数抛异常同样会让进程直接结束
+        self._guarded(self._add_files)([url.toLocalFile() for url in event.mimeData().urls()])
 
     def _pick_files(self):
         media = f"{t('视频/音频')} ({MEDIA_SUFFIXES});;{t('全部文件')} (*)"
@@ -478,12 +510,12 @@ class MainWindow(QWidget):
         self.worker = Worker(
             jobs, self.engine, lambda notify: Engine(key[0], key[1], key[2], notify=notify)
         )
-        self.worker.note.connect(self._on_note)
-        self.worker.progress.connect(self._on_progress)
-        self.worker.finished_file.connect(self._on_file_done)
-        self.worker.load_failed.connect(self._on_load_failed)
-        self.worker.all_done.connect(self._on_all_done)
+        self.worker.progress.connect(self._guarded(self._on_progress))
+        self.worker.finished_file.connect(self._guarded(self._on_file_done))
+        self.worker.load_failed.connect(self._guarded(self._on_load_failed))
+        self.worker.all_done.connect(self._guarded(self._on_all_done))
         self._set_running(True)
+        self.notes.start()
         self.worker.start()
 
     def _save_settings(self):
@@ -522,13 +554,17 @@ class MainWindow(QWidget):
         ):
             widget.setEnabled(not running)
 
-    def _on_note(self, message, fraction):
-        """模型下载的提示与进度。带进度就只刷进度条，别把日志刷成一片。"""
-        if fraction is None:
-            self._log(message)
+    def _drain_notes(self):
+        """把工作线程攒下的提示写进日志，最新进度刷到进度条上。"""
+        if self.worker is None:
             return
-        self.bar.setValue(int(fraction * 100))
-        self.bar.setFormat(f"{message} %p%")
+        notes, progress = self.worker.take_notes()
+        for message in notes:
+            self._log(message)
+        if progress:
+            message, fraction = progress
+            self.bar.setValue(int(fraction * 100))
+            self.bar.setFormat(f"{message} %p%")
 
     def _on_progress(self, row, stage, fraction):
         name = self.table.item(row, 0).text()
@@ -568,6 +604,8 @@ class MainWindow(QWidget):
         QMessageBox.critical(self, t("模型加载失败"), f"{error}{hint}")
 
     def _on_all_done(self, engine):
+        self._drain_notes()  # 收个尾，最后几条提示别丢
+        self.notes.stop()
         self.engine = engine
         self._set_running(False)
         self._sync_layout_enabled()
@@ -585,14 +623,16 @@ class MainWindow(QWidget):
 
 
 def main():
-    # 窗口模式下没有标准流，先换成不会炸的替身再说
+    # 窗口模式下没有标准流，先换成不会炸的替身；异常也得有地方留痕
     runtime.silence_missing_streams()
+    runtime.report_crashes()
     runtime.clean_leftovers()
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     # 排在事件循环的第一件事：窗口已经画出来了，再去加载 CTranslate2 探显卡
-    QTimer.singleShot(0, window.detect_device)
+    # 探显卡要 import ctranslate2，装坏了会在这儿抛——不兜住的话 PySide6 直接结束进程
+    QTimer.singleShot(0, window._guarded(window.detect_device))
     return app.exec()
 
 

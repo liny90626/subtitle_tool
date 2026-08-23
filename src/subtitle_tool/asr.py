@@ -89,9 +89,11 @@ def cpu_threads() -> int:
     """留一个核给界面。
 
     占满全部核心时 Windows 会直接把窗口判成「未响应」；而且 CTranslate2、
-    onnxruntime(VAD) 和界面线程一起抢核，实测并不会更快。
+    onnxruntime(VAD) 和界面线程一起抢核，实测并不会更快。核少的机器不让——
+    双核上少一个核就是慢一倍，那代价太大了。
     """
-    return max(1, (os.cpu_count() or 4) - 1)
+    cores = os.cpu_count() or 4
+    return cores - 1 if cores >= 4 else cores
 
 
 def whisper_repo(model_size: str) -> str:

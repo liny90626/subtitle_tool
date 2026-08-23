@@ -191,7 +191,10 @@ def _reporter(what: str, notify, cancel):
                 if fraction < state["last"] + _PROGRESS_STEP:
                     return
                 state["last"] = fraction
-            notify(t("下载{what}", what=what), fraction)
+            try:
+                notify(t("下载{what}", what=what), fraction)
+            except Exception:
+                pass  # 报进度是锦上添花，绝不能反过来把下载弄挂
 
     return Reporter
 

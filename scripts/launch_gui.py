@@ -17,6 +17,7 @@ if __name__ == "__main__":
     from subtitle_tool import runtime
 
     runtime.silence_missing_streams()
+    runtime.report_crashes()
     runtime.clean_leftovers()
 
     if len(sys.argv) > 1:

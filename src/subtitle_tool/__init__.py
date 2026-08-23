@@ -2,7 +2,7 @@
 
 from . import hub, i18n, settings
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 
 def _apply_saved_settings():
