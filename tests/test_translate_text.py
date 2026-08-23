@@ -1,4 +1,9 @@
-from subtitle_tool.translate import _clause_point, _localize, _split_sentences
+import threading
+
+import pytest
+
+from subtitle_tool.errors import Cancelled
+from subtitle_tool.translate import Translator, _clause_point, _localize, _split_sentences
 
 
 def test_splits_on_sentence_end():
@@ -42,3 +47,42 @@ def test_cjk_punctuation_is_widened_only_after_han():
     )
     # 非 CJK 目标语原样不动
     assert _localize("Hello, world.", "fra_Latn") == "Hello, world."
+
+
+class _Fake(Translator):
+    """不加载模型的替身，只用来验切批逻辑。"""
+
+    def __init__(self):
+        pass
+
+    def _translate_batch(self, texts, source, target):
+        return [f"<{text}>" for text in texts]
+
+
+def test_length_sorted_batches_keep_the_original_order():
+    # 按长度排序只是为了少算 padding，出来的顺序和条数必须和进去时一样
+    sentences = ["a" * n for n in (5, 1, 9, 3, 7, 2)]
+    seen = []
+    result = _Fake()._translate_all(sentences, "x", "y", 2, seen.append, None)
+    assert result == [f"<{s}>" for s in sentences]
+    assert seen == sorted(seen) and seen[-1] == 1.0
+
+
+def test_batches_really_are_grouped_by_length():
+    batches = []
+
+    class Spy(_Fake):
+        def _translate_batch(self, texts, source, target):
+            batches.append([len(t) for t in texts])
+            return super()._translate_batch(texts, source, target)
+
+    Spy()._translate_all(["a" * n for n in (9, 1, 8, 2)], "x", "y", 2, None, None)
+    # 长短混着切批时每批都要补齐到最长那条，凑到一起就省下来了
+    assert batches == [[1, 2], [8, 9]]
+
+
+def test_cancelling_stops_between_batches():
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(Cancelled):
+        _Fake()._translate_all(["a", "b"], "x", "y", 2, None, cancel)

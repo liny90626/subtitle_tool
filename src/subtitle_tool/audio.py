@@ -119,7 +119,10 @@ def decode_track(
         raise ValueError(
             t("{path} 第 {number} 条音轨没有解出任何音频数据", path=path, number=track_index + 1)
         )
-    return np.frombuffer(raw.getbuffer(), dtype=dtype).astype(np.float32) / 32768.0
+    # 转完就地归一化：一小时音轨是 230MB，能少一次全量拷贝就少一次
+    audio = np.frombuffer(raw.getbuffer(), dtype=dtype).astype(np.float32)
+    audio /= 32768.0
+    return audio
 
 
 def _skip_invalid(frames):
