@@ -99,12 +99,18 @@ def main(argv=None) -> int:
     )
     engine = Engine(args.model, args.device, args.translate_model, args.model_dir)
 
+    failed = 0
     for video in args.videos:
         print(f"→ {video}")
         try:
             result = engine.run(video, options, progress=_print_progress)
         except Cancelled:
             return 130
+        except (ValueError, OSError) as error:
+            # 批处理里一个文件坏掉不该中断其余文件，但退出码要如实反映失败
+            print(f"\r{' ' * 60}\r  ✗ {error}")
+            failed += 1
+            continue
         print(f"\r{' ' * 60}\r  源语种 {describe_whisper(result.source_language)}", end="")
         if args.multi_language:
             print(f"，共 {len({s[2] for s in result.language_spans})} 种语言", end="")
@@ -113,7 +119,7 @@ def main(argv=None) -> int:
         print(f"，{len(result.cues)} 条字幕")
         for out in result.outputs:
             print(f"  ✓ {out}")
-    return 0
+    return 1 if failed else 0
 
 
 def _print_progress(stage: str, fraction: float):
