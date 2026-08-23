@@ -80,33 +80,59 @@ jobs:
       - name: 打包
         run: pyinstaller subtitle_tool.spec --noconfirm
 
-      - name: 冒烟测试（确认打出来的程序能跑起来）
+      - name: 压缩
+        run: Compress-Archive -Path dist/subtitle-tool/* -DestinationPath subtitle-tool-windows-x64.zip
+
+      - name: 冒烟测试（在解压出来的副本上跑，验的就是用户拿到的东西）
         run: |
-          $exe = "dist/subtitle-tool/SubtitleTool.exe"
-          if (-not (Test-Path $exe)) { throw "没有产出可执行文件" }
-          if (-not (Test-Path "dist/subtitle-tool/_internal/faster_whisper/assets/silero_vad_v6.onnx")) {
-            throw "VAD 权重没打进去，运行时会找不到"
+          Expand-Archive subtitle-tool-windows-x64.zip -DestinationPath smoke
+          $exe = "smoke/SubtitleTool.exe"
+          if (-not (Test-Path $exe)) { throw "压缩包里没有可执行文件" }
+          if (-not (Test-Path "smoke/_internal/faster_whisper/assets/silero_vad_v6.onnx")) {
+            throw "VAD 权重没进压缩包，运行时会找不到"
           }
-          if (-not (Test-Path "dist/subtitle-tool/_internal/shipped.txt")) {
-            throw "发布清单没写出来，覆盖安装时清理不掉旧文件"
+          if (-not (Test-Path "smoke/_internal/shipped.txt")) { throw "发布清单没进压缩包" }
+
+          # 压缩/解压有没有漏文件——漏了的话程序会在用到那个 DLL 的时候突然消失
+          $shipped = @(Get-Content "smoke/_internal/shipped.txt").Count
+          $actual = @(Get-ChildItem smoke/_internal -Recurse -File).Count
+          "发布清单 $shipped 项，解压出 $actual 个文件"
+          if ($actual -lt $shipped) { throw "压缩包不全：解压出来的比清单少 $($shipped - $actual) 个" }
+
+          # 真跑一整条流水线：下模型 → 转写 → 翻译 → 写字幕。
+          # CTranslate2 和 onnxruntime 要到这一步才加载，--list-tracks 是验不出来的
+          $p = Start-Process $exe -Wait -PassThru -ArgumentList `
+            "tests/data/jfk.flac","--model","tiny","--target","zh","--model-dir","models","--output-dir","out"
+          if ($p.ExitCode -ne 0) { throw "打包版跑不完整条流水线，退出码 $($p.ExitCode)" }
+          if (-not (Test-Path "out/jfk.zh.srt")) { throw "没有写出字幕文件" }
+          Get-Content "out/jfk.zh.srt" -Encoding utf8 | Select-Object -First 4
+
+          # 覆盖升级：旧版残留该被清掉，清完还得能正常跑
+          "旧版残留" | Out-File "smoke/_internal/leftover-from-old-version.dll"
+          Remove-Item "smoke/_internal/cleaned.txt"
+          $p = Start-Process $exe -Wait -PassThru -ArgumentList "--list-tracks","tests/data/jfk.flac"
+          if ($p.ExitCode -ne 0) { throw "清掉残留之后跑不起来，退出码 $($p.ExitCode)" }
+          if (Test-Path "smoke/_internal/leftover-from-old-version.dll") { throw "旧版残留没被清掉" }
+          if (-not (Test-Path "smoke/_internal/faster_whisper/assets/silero_vad_v6.onnx")) {
+            throw "清理把该留的文件删掉了"
           }
-          "解压后体积：{0:N0} MB" -f ((Get-ChildItem dist/subtitle-tool -Recurse |
-            Measure-Object -Property Length -Sum).Sum / 1MB)
-          # 体积大头列出来，下次真要减体积时有据可依
-          Get-ChildItem dist/subtitle-tool/_internal -Recurse -File |
-            Sort-Object Length -Descending | Select-Object -First 15 |
-            ForEach-Object { "{0,8:N1} MB  {1}" -f ($_.Length / 1MB), $_.Name }
-          # 带参数走命令行分支：能列出音轨就说明 PyAV / CTranslate2 等原生库都加载成功
-          $p = Start-Process $exe -ArgumentList "--list-tracks","tests/data/jfk.flac" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "命令行冒烟测试失败，退出码 $($p.ExitCode)" }
-          # 再确认图形界面能起来且不会秒退
+
+          # 图形界面能起来且不会秒退
           $g = Start-Process $exe -PassThru
           Start-Sleep -Seconds 25
           if ($g.HasExited) { throw "图形界面启动后立即退出，退出码 $($g.ExitCode)" }
           Stop-Process -Id $g.Id -Force
 
-      - name: 压缩
-        run: Compress-Archive -Path dist/subtitle-tool/* -DestinationPath subtitle-tool-windows-x64.zip
+          # 崩溃日志里有东西就说明上面某一步悄悄出事了
+          $log = Join-Path $env:APPDATA "subtitle-tool\subtitle-tool.log"
+          if (Test-Path $log) { Get-Content $log; throw "跑出崩溃日志了" }
+
+          "解压后体积：{0:N0} MB" -f ((Get-ChildItem smoke -Recurse |
+            Measure-Object -Property Length -Sum).Sum / 1MB)
+          # 体积大头列出来，下次真要减体积时有据可依
+          Get-ChildItem smoke/_internal -Recurse -File |
+            Sort-Object Length -Descending | Select-Object -First 15 |
+            ForEach-Object { "{0,8:N1} MB  {1}" -f ($_.Length / 1MB), $_.Name }
 
       - uses: actions/upload-artifact@v7
         with:
