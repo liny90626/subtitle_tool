@@ -53,6 +53,7 @@ class Worker(QThread):
 
     progress = Signal(int, str, float)
     finished_file = Signal(int, object, object)  # 行号, Result, 异常
+    load_failed = Signal(object)
     all_done = Signal(object)  # 把加载好的 Engine 交还主线程复用
 
     def __init__(self, jobs, engine, engine_factory):
@@ -63,8 +64,15 @@ class Worker(QThread):
         self.cancel = threading.Event()
 
     def run(self):
-        if self.engine is None:
-            self.engine = self.engine_factory()
+        try:
+            if self.engine is None:
+                self.engine = self.engine_factory()
+        except Exception as error:
+            # 模型下载/加载失败（断网、磁盘不够）。不报出来的话线程直接死掉，
+            # all_done 永远不发，界面会一直卡在「运行中」，开始按钮再也点不动
+            self.load_failed.emit(error)
+            self.all_done.emit(None)
+            return
         for row, path, options in self.jobs:
             if self.cancel.is_set():
                 break
@@ -315,6 +323,7 @@ class MainWindow(QWidget):
         self.worker = Worker(jobs, self.engine, lambda: Engine(key[0], key[1], key[2]))
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_file.connect(self._on_file_done)
+        self.worker.load_failed.connect(self._on_load_failed)
         self.worker.all_done.connect(self._on_all_done)
         self._set_running(True)
         self.worker.start()
@@ -363,6 +372,12 @@ class MainWindow(QWidget):
         self._log(f"✓ {name}：{detected}{arrow}，{len(result.cues)} 条字幕")
         for path in result.outputs:
             self._log(f"    {path}")
+
+    def _on_load_failed(self, error):
+        self._log(f"✗ 模型加载失败：{error}")
+        for row in range(self.table.rowCount()):
+            self.table.item(row, 2).setText("未开始")
+        QMessageBox.critical(self, "模型加载失败", f"{error}\n\n首次使用需要联网下载模型。")
 
     def _on_all_done(self, engine):
         self.engine = engine
