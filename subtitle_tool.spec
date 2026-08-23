@@ -132,4 +132,4 @@ shipped = sorted(
 )
 with open(os.path.join(internal, "shipped.txt"), "w", encoding="utf-8") as handle:
     handle.write("\n".join([*shipped, "shipped.txt"]))
-print(f"发布清单：{len(shipped) + 1} 个文件")
+print(f"shipped.txt lists {len(shipped) + 1} files")
