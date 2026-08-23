@@ -4,13 +4,28 @@ from string import Formatter
 
 import pytest
 
-from subtitle_tool import gui, i18n
+from subtitle_tool import i18n
 from subtitle_tool.i18n import _ENGLISH
 from subtitle_tool.pipeline import Options, _plan
 
 SOURCE = pathlib.Path(__file__).resolve().parents[1] / "src" / "subtitle_tool"
 #: 这些函数的某个参数是「要翻译的中文原文」
 TRANSLATED_ARGUMENT = {"t": 0, "_label": 0, "_text": 1, "_set_status": 1}
+
+
+def _choice_labels() -> list[str]:
+    """gui.py 里各张 *_CHOICES 表的标签——存进表、显示时才 t()，扫不到调用点。
+
+    读源码而不是 import gui：CI 跑在无图形环境里，导入 PySide6 会因为缺 libEGL 直接失败。
+    """
+    labels = []
+    for node in ast.parse((SOURCE / "gui.py").read_text(encoding="utf-8")).body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Tuple):
+            continue
+        if not getattr(node.targets[0], "id", "").endswith("_CHOICES"):
+            continue
+        labels += [pair.elts[0].value for pair in node.value.elts]
+    return labels
 
 
 def _sources() -> list[str]:
@@ -27,9 +42,8 @@ def _sources() -> list[str]:
             argument = node.args[index]
             if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
                 found.append(argument.value)
-    # 下拉框选项和阶段名是先存成表、显示时才翻的，扫不到调用点
-    for table in (gui.LAYOUT_CHOICES, gui.DEVICE_CHOICES, gui.SOURCE_CHOICES):
-        found += [label for label, _ in table]
+    found += _choice_labels()
+    # 阶段名在流水线内部当字典键用，显示前才翻
     found += [label for label, _ in _plan(Options(multi_language=True, target_language="zho_Hans"))]
     return found
 
