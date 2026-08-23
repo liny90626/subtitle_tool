@@ -1,0 +1,51 @@
+name: 构建 Windows 版
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -e ".[gui,dev]"
+
+      - name: 打包
+        run: pyinstaller subtitle_tool.spec --noconfirm
+
+      - name: 冒烟测试（确认打出来的程序能跑起来）
+        run: |
+          $exe = "dist/subtitle-tool/字幕生成工具.exe"
+          if (-not (Test-Path $exe)) { throw "没有产出可执行文件" }
+          if (-not (Test-Path "dist/subtitle-tool/_internal/faster_whisper/assets/silero_vad_v6.onnx")) {
+            throw "VAD 权重没打进去，运行时会找不到"
+          }
+          $p = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 25
+          if ($p.HasExited) { throw "程序启动后立即退出，退出码 $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+
+      - name: 压缩
+        run: Compress-Archive -Path dist/subtitle-tool/* -DestinationPath subtitle-tool-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: subtitle-tool-windows-x64
+          path: subtitle-tool-windows-x64.zip
+          retention-days: 30
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: subtitle-tool-windows-x64.zip
+          generate_release_notes: true
