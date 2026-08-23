@@ -10,12 +10,9 @@ import re
 import threading
 from typing import Callable, Optional
 
-import ctranslate2
-from huggingface_hub import snapshot_download
-from tokenizers import Tokenizer
-
 from . import hub
-from .asr import Cancelled, pick_device
+from .asr import pick_device
+from .errors import Cancelled
 from .i18n import t
 
 #: 翻译模型仓库。600M 约 620MB，1.3B 约 1.4GB、质量更好但慢 2 倍以上。
@@ -36,15 +33,18 @@ class Translator:
         model: str = DEFAULT_MODEL,
         device: str = "auto",
         download_root: Optional[str] = None,
-        notify: Optional[Callable[[str], None]] = None,
+        notify=None,
+        cancel: Optional[threading.Event] = None,
     ):
+        import ctranslate2
+        from tokenizers import Tokenizer
+
         path = hub.fetch(
-            lambda local_only: snapshot_download(
-                MODEL_REPOS[model], cache_dir=download_root, local_files_only=local_only
-            ),
-            t("翻译模型 {model}", model=model),
-            download_root,
-            notify,
+            MODEL_REPOS[model],
+            cache_dir=download_root,
+            what=t("翻译模型 {model}", model=model),
+            notify=notify,
+            cancel=cancel,
         )
         self.tokenizer = Tokenizer.from_file(os.path.join(path, "tokenizer.json"))
         self.device, self.compute_type = pick_device(device)

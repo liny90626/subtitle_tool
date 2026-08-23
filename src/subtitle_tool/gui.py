@@ -9,7 +9,7 @@ import sys
 import threading
 import traceback
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -33,9 +33,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import hub, i18n, settings
-from .asr import MODEL_SIZES, Cancelled, default_model, pick_device
+from . import hub, i18n, runtime, settings
+from .asr import MODEL_SIZES, default_model, pick_device
 from .audio import probe_tracks
+from .errors import Cancelled, DownloadError
 from .i18n import t
 from .languages import describe_whisper, flores_name, target_choices
 from .pipeline import Engine, Options
@@ -66,7 +67,7 @@ class Worker(QThread):
 
     progress = Signal(int, str, float)
     finished_file = Signal(int, object, object)  # 行号, Result, 异常
-    note = Signal(str)  # 模型下载之类的耗时提示，转回主线程写日志
+    note = Signal(str, object)  # (提示, 进度)；进度为 None 表示只是一条消息
     load_failed = Signal(object)
     all_done = Signal(object)  # 把加载好的 Engine 交还主线程复用
 
@@ -103,8 +104,12 @@ class Worker(QThread):
                 self.finished_file.emit(row, result, None)
             except Cancelled:
                 break
+            except DownloadError as error:
+                # 模型下不下来跟具体文件无关，后面的文件只会一模一样再失败一遍
+                self.load_failed.emit(error)
+                break
             except Exception as error:
-                # 一个文件失败不该中断整批；异常原样交给界面显示并打印堆栈，不吞
+                # 一个文件失败不该中断整批；异常原样交给界面显示并记下堆栈，不吞
                 self.finished_file.emit(row, None, error)
         self.all_done.emit(self.engine)
 
@@ -209,21 +214,18 @@ class MainWindow(QWidget):
 
         self.model = QComboBox()
         self.model.addItems(MODEL_SIZES)
-        self.model.setCurrentText(default_model())
         self.device = QComboBox()
         self._choices(self.device, lambda: [(t(label), value) for label, value in DEVICE_CHOICES])
-        detected = QLabel()
-        gpu = pick_device()[0] == "cuda"
-        self._live(
-            lambda: detected.setText(
-                t("（检测到 NVIDIA 显卡）") if gpu else t("（未检测到显卡，用 CPU）")
-            )
-        )
+        # 探显卡要把 CTranslate2 整个加载进来，几百毫秒起步。先让窗口显示出来，
+        # detect_device() 在事件循环转起来之后再补上结果
+        self.gpu = None
+        self.detected = QLabel()
+        self._live(self._show_device)
         engine_row = QHBoxLayout()
         engine_row.addWidget(self.model, 1)
         engine_row.addWidget(self._label("设备"))
         engine_row.addWidget(self.device, 1)
-        engine_row.addWidget(detected)
+        engine_row.addWidget(self.detected)
         form.addRow(self._label("识别模型"), engine_row)
 
         self.multi_language = QCheckBox()
@@ -301,6 +303,20 @@ class MainWindow(QWidget):
         return [(t("不翻译（只输出原文）"), None)] + [
             (f"{name}  [{flores}]", flores) for flores, name in target_choices()
         ]
+
+    def _show_device(self):
+        if self.gpu is None:
+            self.detected.setText(t("（正在检测显卡…）"))
+        else:
+            self.detected.setText(
+                t("（检测到 NVIDIA 显卡）") if self.gpu else t("（未检测到显卡，用 CPU）")
+            )
+
+    def detect_device(self):
+        """窗口显示之后再探显卡，并按结果挑默认识别模型。"""
+        self.gpu = pick_device()[0] == "cuda"
+        self._show_device()
+        self.model.setCurrentText(default_model())
 
     def _language_options(self):
         # 中文 / English 用各语言自己的写法，谁都认得出自己那一项
@@ -462,7 +478,7 @@ class MainWindow(QWidget):
         self.worker = Worker(
             jobs, self.engine, lambda notify: Engine(key[0], key[1], key[2], notify=notify)
         )
-        self.worker.note.connect(self._log)
+        self.worker.note.connect(self._on_note)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_file.connect(self._on_file_done)
         self.worker.load_failed.connect(self._on_load_failed)
@@ -506,6 +522,14 @@ class MainWindow(QWidget):
         ):
             widget.setEnabled(not running)
 
+    def _on_note(self, message, fraction):
+        """模型下载的提示与进度。带进度就只刷进度条，别把日志刷成一片。"""
+        if fraction is None:
+            self._log(message)
+            return
+        self.bar.setValue(int(fraction * 100))
+        self.bar.setFormat(f"{message} %p%")
+
     def _on_progress(self, row, stage, fraction):
         name = self.table.item(row, 0).text()
         self._set_status(row, "{stage} {percent:.0f}%", stage=t(stage), percent=fraction * 100)
@@ -517,7 +541,8 @@ class MainWindow(QWidget):
         if error is not None:
             self._set_status(row, "失败")
             self._log(t("✗ {name}：{error}", name=name, error=error))
-            traceback.print_exception(type(error), error, error.__traceback__)
+            # 打包成窗口程序后 stderr 是 None，往那儿打堆栈会把界面拖垮，写进日志框
+            self._log("".join(traceback.format_exception(type(error), error, error.__traceback__)))
             return
         self._set_status(row, "完成")
         languages = {span[2] for span in result.language_spans}
@@ -533,7 +558,9 @@ class MainWindow(QWidget):
     def _on_load_failed(self, error):
         self._log(t("✗ 模型加载失败：{error}", error=error))
         for row in range(self.table.rowCount()):
-            self._set_status(row, "未开始")
+            stored = self.table.item(row, 2).data(Qt.UserRole)
+            if stored and stored[0] == "等待中":  # 已经跑完的行别改掉
+                self._set_status(row, "未开始")
         # 下载失败的提示里已经写了怎么办，别再叠一句正确的废话
         hint = (
             "" if isinstance(error, hub.DownloadError) else "\n\n" + t("首次使用需要联网下载模型。")
@@ -558,9 +585,14 @@ class MainWindow(QWidget):
 
 
 def main():
+    # 窗口模式下没有标准流，先换成不会炸的替身再说
+    runtime.silence_missing_streams()
+    runtime.clean_leftovers()
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
+    # 排在事件循环的第一件事：窗口已经画出来了，再去加载 CTranslate2 探显卡
+    QTimer.singleShot(0, window.detect_device)
     return app.exec()
 
 

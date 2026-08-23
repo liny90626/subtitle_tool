@@ -4,8 +4,9 @@ import argparse
 import sys
 
 from . import hub, i18n, settings
-from .asr import MODEL_SIZES, Cancelled, default_model
+from .asr import MODEL_SIZES, default_model
 from .audio import probe_tracks
+from .errors import Cancelled, DownloadError
 from .i18n import t
 from .languages import describe_whisper, flores_name, resolve_target, target_choices
 from .pipeline import LAYOUTS, Engine, Options
@@ -146,7 +147,7 @@ def main(argv=None) -> int:
             result = engine.run(video, options, progress=_print_progress)
         except Cancelled:
             return 130
-        except hub.DownloadError as error:
+        except DownloadError as error:
             # 模型下不下来跟具体文件无关，后面的文件只会一模一样地再失败一遍
             _overwrite(f"  ✗ {error}")
             return 1
@@ -184,8 +185,11 @@ def _print_progress(stage: str, fraction: float):
     print(f"\r  {t(stage)} {fraction * 100:5.1f}%", end="", flush=True)
 
 
-def _note(message: str):
-    _overwrite(f"  {message}")
+def _note(message: str, fraction=None):
+    if fraction is None:
+        _overwrite(f"  {message}")
+    else:
+        print(f"\r  {message} {fraction * 100:5.1f}%", end="", flush=True)
 
 
 def _overwrite(message: str):

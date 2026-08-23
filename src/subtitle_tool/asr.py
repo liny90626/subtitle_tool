@@ -4,16 +4,14 @@
 且不依赖 PyTorch，Windows 打包体积可控。
 """
 
+import os
 import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-import ctranslate2
-from faster_whisper import BatchedInferencePipeline, WhisperModel
-from faster_whisper.utils import download_model
-
 from . import hub
 from .audio import SAMPLE_RATE
+from .errors import Cancelled
 from .i18n import t
 
 #: 可选模型，按「体积 / 速度 / 精度」从轻到重排列
@@ -28,6 +26,15 @@ MODEL_SIZES = (
 )
 
 
+#: 仓库里真正用得着的文件，跟 faster-whisper 自己下的那份一致
+WHISPER_FILES = [
+    "config.json",
+    "preprocessor_config.json",
+    "model.bin",
+    "tokenizer.json",
+    "vocabulary.*",
+]
+
 #: 单条字幕的时长上限，取通行的 7 秒
 MAX_CUE_SECONDS = 7.0
 #: 单条字幕的字数上限，按两行算；CJK 字宽是拉丁字母两倍所以减半
@@ -41,10 +48,6 @@ _MIN_CUE_CHARS = 12
 _SENTENCE_ENDS = (".", "!", "?", "。", "！", "？", "…")
 #: 限长断句时可以回退到的标点
 _CLAUSE_ENDS = (*_SENTENCE_ENDS, ",", ";", ":", "，", "、", "；", "：")
-
-
-class Cancelled(Exception):
-    """用户中途取消任务。"""
 
 
 @dataclass
@@ -74,9 +77,37 @@ def pick_device(preference: str = "auto") -> tuple[str, str]:
     """
     if preference == "cpu":
         return "cpu", "int8"
+    # ctranslate2 光导入就要两百多毫秒，等真的要探显卡时再说
+    import ctranslate2
+
     if preference == "cuda" or ctranslate2.get_cuda_device_count() > 0:
         return "cuda", "float16"
     return "cpu", "int8"
+
+
+def cpu_threads() -> int:
+    """留一个核给界面。
+
+    占满全部核心时 Windows 会直接把窗口判成「未响应」；而且 CTranslate2、
+    onnxruntime(VAD) 和界面线程一起抢核，实测并不会更快。
+    """
+    return max(1, (os.cpu_count() or 4) - 1)
+
+
+def whisper_repo(model_size: str) -> str:
+    """模型名转 HuggingFace 仓库名。
+
+    faster-whisper 没把这张表公开出来，只能取私有的那份；取不到就明确报错，
+    别让它退化成一条看不懂的下载失败。
+    """
+    if "/" in model_size:
+        return model_size
+    from faster_whisper.utils import _MODELS
+
+    repo = _MODELS.get(model_size)
+    if repo is None:
+        raise ValueError(t("不认识的识别模型：{model}", model=model_size))
+    return repo
 
 
 class Transcriber:
@@ -87,20 +118,28 @@ class Transcriber:
         model_size: str = "small",
         device: str = "auto",
         download_root: Optional[str] = None,
-        notify: Optional[Callable[[str], None]] = None,
+        notify=None,
+        cancel: Optional[threading.Event] = None,
     ):
+        from faster_whisper import BatchedInferencePipeline, WhisperModel
+
         self.device, self.compute_type = pick_device(device)
         # 先自己把模型取到本地再交给 WhisperModel：这样下载走 hub 那套「缓存优先 +
-        # 挑通得了的源」，而不是 faster-whisper 直接连 huggingface.co
+        # 挑通得了的源 + 报进度」，而不是 faster-whisper 直接连 huggingface.co
         path = hub.fetch(
-            lambda local_only: download_model(
-                model_size, local_files_only=local_only, cache_dir=download_root
-            ),
-            t("识别模型 {model}", model=model_size),
-            download_root,
-            notify,
+            whisper_repo(model_size),
+            cache_dir=download_root,
+            allow_patterns=WHISPER_FILES,
+            what=t("识别模型 {model}", model=model_size),
+            notify=notify,
+            cancel=cancel,
         )
-        self.model = WhisperModel(path, device=self.device, compute_type=self.compute_type)
+        self.model = WhisperModel(
+            path,
+            device=self.device,
+            compute_type=self.compute_type,
+            cpu_threads=cpu_threads(),
+        )
         self.batched = BatchedInferencePipeline(model=self.model)
         self.model_size = model_size
 

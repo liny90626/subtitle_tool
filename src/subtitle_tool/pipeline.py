@@ -60,6 +60,8 @@ class Engine:
         self.download_root = download_root
         #: 首次下载模型这类「要等很久」的事情通过它告诉用户，None 表示不报
         self.notify = notify
+        #: 本次 run() 的取消信号。模型是用到才加载的，几百 MB 的下载也得能中断
+        self._cancel = None
         self._transcriber = None
         self._translator = None
 
@@ -67,7 +69,7 @@ class Engine:
     def transcriber(self) -> Transcriber:
         if self._transcriber is None:
             self._transcriber = Transcriber(
-                self.model_size, self.device, self.download_root, self.notify
+                self.model_size, self.device, self.download_root, self.notify, self._cancel
             )
         return self._transcriber
 
@@ -75,7 +77,7 @@ class Engine:
     def translator(self) -> Translator:
         if self._translator is None:
             self._translator = Translator(
-                self.translate_model, self.device, self.download_root, self.notify
+                self.translate_model, self.device, self.download_root, self.notify, self._cancel
             )
         return self._translator
 
@@ -87,6 +89,7 @@ class Engine:
         cancel=None,
     ) -> Result:
         """跑完整条流水线并写出字幕文件。"""
+        self._cancel = cancel
         name = os.path.basename(path)
         tracks = probe_tracks(path)
         if not tracks:

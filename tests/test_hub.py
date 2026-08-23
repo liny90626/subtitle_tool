@@ -1,9 +1,11 @@
 import os
 import sys
+import threading
 
 import pytest
 
 from subtitle_tool import hub, settings
+from subtitle_tool.errors import Cancelled
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +66,7 @@ def _session(monkeypatch, replies, style="httpx"):
     return session
 
 
-def _snapshot(tmp_path, name, files=hub._REQUIRED_FILES):
+def _snapshot_dir(tmp_path, name, files=hub._REQUIRED_FILES):
     directory = tmp_path / name
     directory.mkdir()
     for filename in files:
@@ -149,52 +151,55 @@ def test_probe_works_with_the_requests_based_client(monkeypatch):
 # ---------- 取模型 ----------
 
 
-def test_cached_model_loads_without_touching_the_network(tmp_path, monkeypatch):
-    path = _snapshot(tmp_path, "cached")
-    monkeypatch.setattr(hub, "endpoint", lambda: pytest.fail("缓存命中就不该联网"))
+def _snapshots(monkeypatch, cached=None, downloaded=None):
+    """替掉真正的 snapshot_download，记下每次是「只看本地」还是「联网下」。"""
     calls = []
 
-    def download(local_only):
+    def snapshot(repo_id, **kwargs):
+        local_only = bool(kwargs.get("local_files_only"))
         calls.append(local_only)
-        return path
+        if local_only:
+            if cached is None:
+                raise FileNotFoundError("没下过")
+            return cached
+        if downloaded is None:
+            raise OSError("[WinError 10060] 连接尝试失败")
+        return downloaded
 
-    assert hub.fetch(download, "识别模型 small") == path
+    monkeypatch.setattr(hub, "_snapshot", snapshot)
+    monkeypatch.setattr(hub, "endpoint", lambda: hub.OFFICIAL)
+    return calls
+
+
+def test_cached_model_loads_without_touching_the_network(tmp_path, monkeypatch):
+    path = _snapshot_dir(tmp_path, "cached")
+    calls = _snapshots(monkeypatch, cached=path)
+    monkeypatch.setattr(hub, "endpoint", lambda: pytest.fail("缓存命中就不该联网"))
+    assert hub.fetch("some/repo") == path
     assert calls == [True]
 
 
 def test_half_downloaded_cache_is_downloaded_again(tmp_path, monkeypatch):
-    partial = _snapshot(tmp_path, "partial", files=("config.json",))
-    complete = _snapshot(tmp_path, "complete")
-    monkeypatch.setattr(hub, "endpoint", lambda: hub.OFFICIAL)
-
-    def download(local_only):
-        return partial if local_only else complete
-
-    assert hub.fetch(download, "识别模型 small") == complete
+    partial = _snapshot_dir(tmp_path, "partial", files=("config.json",))
+    complete = _snapshot_dir(tmp_path, "complete")
+    calls = _snapshots(monkeypatch, cached=partial, downloaded=complete)
+    assert hub.fetch("some/repo") == complete
+    assert calls == [True, False]
 
 
 def test_missing_cache_falls_through_to_downloading(tmp_path, monkeypatch):
-    complete = _snapshot(tmp_path, "complete")
-    monkeypatch.setattr(hub, "endpoint", lambda: hub.OFFICIAL)
+    complete = _snapshot_dir(tmp_path, "complete")
+    _snapshots(monkeypatch, downloaded=complete)
     notes = []
-
-    def download(local_only):
-        if local_only:
-            raise FileNotFoundError("没下过")
-        return complete
-
-    assert hub.fetch(download, "识别模型 small", notify=notes.append) == complete
-    assert hub.OFFICIAL in notes[0] and "识别模型 small" in notes[0]
+    assert hub.fetch("some/repo", what="识别模型 small", notify=lambda m, f: notes.append((m, f)))
+    assert notes[0][1] is None and hub.OFFICIAL in notes[0][0]
 
 
 def _failing_fetch(monkeypatch, source):
+    _snapshots(monkeypatch)
     monkeypatch.setattr(hub, "endpoint", lambda: source)
-
-    def download(local_only):
-        raise OSError("[WinError 10060] 连接尝试失败")
-
     with pytest.raises(hub.DownloadError) as error:
-        hub.fetch(download, "识别模型 small", cache_dir="D:/models")
+        hub.fetch("some/repo", cache_dir="D:/models", what="识别模型 small")
     return str(error.value)
 
 
@@ -210,6 +215,41 @@ def test_failed_download_on_the_mirror_does_not_suggest_the_mirror(monkeypatch):
     message = _failing_fetch(monkeypatch, hub.MIRROR)
     assert "--model-source mirror" not in message
     assert "--model-source auto" in message
+
+
+# ---------- 下载进度 ----------
+
+
+def test_progress_never_writes_to_the_screen(monkeypatch):
+    """窗口模式下 stderr 是 None，进度条往那儿写就是 AttributeError——v0.1.4 卡死的根因。"""
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    seen = []
+    reporter = hub._reporter(
+        "识别模型 small", lambda message, fraction: seen.append(fraction), None
+    )
+    with reporter(total=100, unit="B") as bar:
+        bar.update(50)
+        bar.update(50)
+    assert seen[-1] == 1.0
+
+
+def test_progress_adds_up_across_files(monkeypatch):
+    seen = []
+    reporter = hub._reporter("翻译模型", lambda message, fraction: seen.append(fraction), None)
+    reporter(total=2, unit="it")  # 「Fetching N files」那条，不该算进字节数
+    first, second = reporter(total=300, unit="B"), reporter(total=100, unit="B")
+    first.update(300)
+    second.update(100)
+    assert seen == [0.75, 1.0]
+
+
+def test_cancelling_stops_the_download():
+    cancel = threading.Event()
+    cancel.set()
+    reporter = hub._reporter("识别模型 small", None, cancel)
+    with pytest.raises(Cancelled):
+        reporter(total=100, unit="B").update(1)
 
 
 # ---------- 让 huggingface_hub 跟着换源 ----------

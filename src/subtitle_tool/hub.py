@@ -14,8 +14,10 @@ folder」——看着像程序坏了，其实只是网络到不了下载源。
 
 import os
 import sys
+import threading
 from typing import Callable, Optional
 
+from .errors import Cancelled, DownloadError
 from .i18n import t
 from .settings import AUTO, Settings
 
@@ -29,6 +31,8 @@ _PROBE_FILE = "/Systran/faster-whisper-tiny/resolve/main/config.json"
 _PROBE_TIMEOUT = 6.0
 #: CTranslate2 模型（识别、翻译都是）由这几个文件组成，缺一个就说明缓存没下全
 _REQUIRED_FILES = ("config.json", "model.bin", "tokenizer.json")
+#: 下载进度至少推进这么多才回调一次，免得刷爆界面事件队列
+_PROGRESS_STEP = 0.005
 
 #: 用户自己在环境里配的 HF_ENDPOINT。必须在本模块设值之前读，它比「自动」优先
 _ENV_ENDPOINT = (os.environ.get("HF_ENDPOINT") or "").rstrip("/")
@@ -39,10 +43,6 @@ _settings = Settings()
 _chosen: Optional[str] = None
 #: 本进程设过的代理环境变量，用户改设置时要能撤掉
 _proxy_vars: tuple = ()
-
-
-class DownloadError(RuntimeError):
-    """模型下载失败。消息里带着可以照做的解决办法。"""
 
 
 def apply(settings: Settings) -> None:
@@ -87,17 +87,18 @@ def endpoint() -> str:
 
 
 def fetch(
-    download: Callable[[bool], str],
-    what: str,
+    repo_id: str,
     cache_dir: Optional[str] = None,
-    notify: Optional[Callable[[str], None]] = None,
+    allow_patterns: Optional[list] = None,
+    what: str = "",
+    notify: Optional[Callable[[str, Optional[float]], None]] = None,
+    cancel=None,
 ) -> str:
     """取模型目录：先看本地缓存，缺了才联网下载。
 
-    ``download(local_only)`` 是各模型自己的下载函数（faster-whisper 的
-    ``download_model``、huggingface_hub 的 ``snapshot_download``），返回模型目录。
+    ``notify(消息, 比例)``：比例为 None 表示这是一条一次性提示，否则是下载进度。
     """
-    path = _cached(download)
+    path = _cached(repo_id, cache_dir, allow_patterns)
     if path is not None:
         return path
     source = endpoint()
@@ -107,28 +108,92 @@ def fetch(
                 "正在从 {source} 下载{what}，首次使用需要等一会儿，之后一直复用本地缓存。",
                 source=source,
                 what=what,
-            )
+            ),
+            None,
         )
     try:
-        return download(False)
+        return _snapshot(
+            repo_id,
+            cache_dir=cache_dir,
+            allow_patterns=allow_patterns,
+            tqdm_class=_reporter(what, notify, cancel),
+        )
+    except Cancelled:
+        raise
     except Exception as error:
         raise DownloadError(_advice(what, source, cache_dir, error)) from error
 
 
-def _cached(download: Callable[[bool], str]) -> Optional[str]:
+def _snapshot(repo_id: str, **kwargs) -> str:
+    # huggingface_hub 光导入就要两百多毫秒，用得着时再说，别拖慢启动
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(repo_id, **kwargs)
+
+
+def _cached(repo_id: str, cache_dir, allow_patterns) -> Optional[str]:
     """本地缓存里已有完整模型就返回它的目录，否则返回 None。
 
     huggingface_hub 即使缓存命中也要先问一次 Hub 有没有新版本，网络不通就得等满
     超时。模型仓库是固定不动的，直接认缓存能让离线启动快得多，也更可靠。
     """
     try:
-        path = download(True)
+        path = _snapshot(
+            repo_id, cache_dir=cache_dir, allow_patterns=allow_patterns, local_files_only=True
+        )
     except Exception:
         return None
     if all(os.path.isfile(os.path.join(path, name)) for name in _REQUIRED_FILES):
         return path
     # 上次下到一半：当作没有，重新联网补全
     return None
+
+
+def _reporter(what: str, notify, cancel):
+    """做一个只上报、不往屏幕写的 tqdm。
+
+    huggingface_hub 只留了 ``tqdm_class`` 这一个口子。默认那个会把进度条写到 stderr，
+    而窗口模式下 stderr 是 None，一写就 AttributeError——v0.1.4 下载翻译模型时整个界面
+    失去响应，就是卡在这条链子上。顺带把各个文件的字节数汇总成一个总进度报给界面：
+    620MB 下着一声不吭，用户只能理解成卡死了。
+    """
+    from tqdm import tqdm
+
+    bars = []
+    state = {"last": -1.0}
+    lock = threading.Lock()
+
+    class Reporter(tqdm):
+        def __init__(self, *args, **kwargs):
+            # disable=True 时 tqdm 直接 return，self.unit 之类压根不会赋值，只能看入参
+            self.counts_bytes = kwargs.get("unit") == "B"
+            self.done = 0
+            kwargs["disable"] = True
+            super().__init__(*args, **kwargs)
+            if self.counts_bytes:
+                with lock:
+                    bars.append(self)
+
+        def update(self, n=1):
+            if cancel is not None and cancel.is_set():
+                raise Cancelled()
+            if not self.counts_bytes or not notify:
+                return
+            self.done += n or 0
+            with lock:
+                # total 建条的时候还是 0，边下边往上加，所以每次都重新求和；
+                # Xet 那条路会开两条覆盖同一批字节的进度条，分子分母一起翻倍，比值不变
+                total = sum(bar.total or 0 for bar in bars)
+                done = sum(bar.done for bar in bars)
+                if not total:
+                    return
+                fraction = min(done / total, 1.0)
+                if fraction < state["last"] + _PROGRESS_STEP:
+                    return
+                state["last"] = fraction
+            notify(t("下载{what}", what=what), fraction)
+
+    return Reporter
 
 
 def _usable(source: str) -> bool:

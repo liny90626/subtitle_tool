@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import pytest
+
 from subtitle_tool.asr import _to_cues
 
 
@@ -68,3 +70,26 @@ def test_cjk_uses_half_the_character_budget():
 def test_respects_duration_limit():
     raw = build(" ".join(["word"] * 40), per_word=0.5)
     assert all(c.end - c.start <= 7.5 for c in _to_cues(raw, "en"))
+
+
+def test_every_model_size_maps_to_a_repo():
+    """faster-whisper 那张表是私有的，哪天改了名字要在这里先炸出来。"""
+    from subtitle_tool.asr import MODEL_SIZES, whisper_repo
+
+    for size in MODEL_SIZES:
+        assert "/" in whisper_repo(size)
+
+
+def test_unknown_model_size_says_so():
+    from subtitle_tool.asr import whisper_repo
+
+    with pytest.raises(ValueError, match="不认识"):
+        whisper_repo("超大杯")
+
+
+def test_cpu_threads_leaves_a_core_for_the_interface():
+    import os
+
+    from subtitle_tool.asr import cpu_threads
+
+    assert 1 <= cpu_threads() <= max(1, (os.cpu_count() or 4) - 1)
