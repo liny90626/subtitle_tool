@@ -1,12 +1,64 @@
-name: 构建 Windows 版
+name: 发布 Windows 版
 
+# 仓库里只留这一个工作流：推 v* tag 会自动发布；手动触发则按最新的 v* tag 打包，
+# 两种情况都跑同一份代码——先在 Linux 上过检查，再在 Windows 上打包并发 Release。
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
 jobs:
+  test:
+    name: 检查
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # 手动触发时要能翻出全部 tag
+
+      - name: 确定要发布哪个版本
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            name="${GITHUB_REF#refs/tags/}"
+          else
+            name="$(git tag --list 'v*' --sort=-creatordate | head -n 1)"
+            [ -n "$name" ] || { echo "仓库里还没有 v* tag，没什么可发布的"; exit 1; }
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "本次发布 $name"
+
+      - name: 切到该 tag
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: git checkout "$TAG"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -e ".[gui,dev]"
+
+      - name: 静态检查
+        run: |
+          ruff check src tests scripts
+          ruff format --check src tests scripts
+
+      - name: 生成多音轨测试素材
+        run: python scripts/make_fixture.py
+
+      - name: 单元测试
+        run: pytest -q
+
   build:
+    name: 打包发布
+    needs: test
     runs-on: windows-latest
     # 仓库的 GITHUB_TOKEN 默认只读，创建 Release 必须显式提权到 contents: write，
     # 否则最后一步会报 "Resource not accessible by integration"
@@ -14,6 +66,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.test.outputs.tag }}
 
       - uses: actions/setup-python@v7
         with:
@@ -52,8 +106,8 @@ jobs:
           retention-days: 30
 
       - name: 发布 Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ needs.test.outputs.tag }}
           files: subtitle-tool-windows-x64.zip
           generate_release_notes: true
