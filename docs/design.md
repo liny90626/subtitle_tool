@@ -118,7 +118,34 @@ faster-whisper 的 `multilingual=True` 会逐窗口重判语种并切换解码�
 而免安装包默认就是 CPU 推理。因此启动时用 `ctranslate2.get_cuda_device_count()`
 探测显卡：有 GPU 默认 `large-v3-turbo`，没有则默认 `small`。
 
-### 3.6 其它
+### 3.6 模型下载：缓存优先，官方源连不上就换源
+
+打包版实测最常见的失败不是识别或翻译出错，而是**根本下不到模型**。识别与翻译模型都
+托管在 huggingface.co，这个域名在国内多半连不通，huggingface_hub 会一路超时到
+`ConnectTimeout: [WinError 10060]`，最后抛出来的却是「cannot find the appropriate
+snapshot folder」——看着像程序坏了，其实只是网络到不了下载源。
+
+因此把「取模型」从 faster-whisper / huggingface_hub 手里接管过来（`hub.py`），做三件事。
+
+**缓存优先。** huggingface_hub 即使缓存命中也要先问一次 Hub 有没有新版本，网络不通就
+得等满超时。模型仓库是固定不动的，所以先用 `local_files_only=True` 试一次，三个必备
+文件（`config.json` / `model.bin` / `tokenizer.json`）齐了就直接用——下过一次之后完全
+不联网，也才算兑现了「离线可用」。少文件说明上次下到一半，当作没有重下。
+
+**换源前先探测，而且要探对东西。** 只测「连得上」不够：hf-mirror.com 对境外 IP 会 308
+跳回 huggingface.co，而 huggingface_hub 不跟随跨域跳转，这种源看着通、实际下不动。
+因此按它真正依赖的东西判定——HEAD 一个小文件，响应头里必须带 `x-repo-commit`。探测走
+huggingface_hub 自己的 HTTP 客户端，与真正下载共用同一套代理和证书设置。两个源都探不过
+时仍按首选源试一次：探测只用来加速选源，不该把本来能下的情况直接挡掉。
+
+**换源要能穿透到已经导入的 huggingface_hub。** 它在 import 时就把 `HF_ENDPOINT` 读成
+模块常量，0.x 的 `file_download` 还把 URL 模板按名字绑了过去，只改 `constants` 上那一份
+不管用。所以设置分两路生效：包一被导入就先写环境变量（赶在 huggingface_hub 之前），
+界面上临时改则扫一遍已导入的模块改常量，并把 HTTP 连接池丢掉重建（代理是建连接池时读
+环境变量的）。非官方源还要额外关掉 Xet——它的分块下载会绕开镜像，直连 huggingface 自己
+的存储服务器，连不上官方源的网络照样下不动。
+
+### 3.7 其它
 
 - `condition_on_previous_text=False`：长视频一旦出现幻觉会以上文为条件自我强化成复读，
   牺牲少量上下文连贯性换稳定性
@@ -134,3 +161,5 @@ faster-whisper 的 `multilingual=True` 会逐窗口重判语种并切换解码�
 - **整轨解码进内存**：16kHz float32 单声道约 每小时 230MB，4 小时的片源要 ~1GB 内存。
 - **GPU 需要另装 CUDA 运行库**，免安装包只带 CPU 推理（见 README）。
 - 逐段语种检测按 30 秒分组，同一组内换语言会跟着组内多数走。
+- **自动换源会把下载请求发到第三方镜像** hf-mirror.com（只取公开的模型权重，不涉及
+  用户的视频或字幕）。不接受的话把「模型下载」锁到官方源即可。

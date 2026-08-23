@@ -14,6 +14,7 @@ import ctranslate2
 from huggingface_hub import snapshot_download
 from tokenizers import Tokenizer
 
+from . import hub
 from .asr import Cancelled, pick_device
 
 #: 翻译模型仓库。600M 约 620MB，1.3B 约 1.4GB、质量更好但慢 2 倍以上。
@@ -34,8 +35,16 @@ class Translator:
         model: str = DEFAULT_MODEL,
         device: str = "auto",
         download_root: Optional[str] = None,
+        notify: Optional[Callable[[str], None]] = None,
     ):
-        path = snapshot_download(MODEL_REPOS[model], cache_dir=download_root)
+        path = hub.fetch(
+            lambda local_only: snapshot_download(
+                MODEL_REPOS[model], cache_dir=download_root, local_files_only=local_only
+            ),
+            f"翻译模型 {model}",
+            download_root,
+            notify,
+        )
         self.tokenizer = Tokenizer.from_file(os.path.join(path, "tokenizer.json"))
         self.device, self.compute_type = pick_device(device)
         self.translator = ctranslate2.Translator(

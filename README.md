@@ -18,7 +18,10 @@
 3. 把视频拖进窗口 → 选音轨和目标语言 → 点「开始生成」
 
 首次运行会自动下载模型（识别模型按所选大小 75MB~1.6GB，翻译模型 620MB），
-之后一直复用。默认存放在 `%USERPROFILE%\.cache\huggingface`。
+之后一直复用，默认存放在 `%USERPROFILE%\.cache\huggingface`。
+模型托管在 huggingface.co，这个域名在国内多半连不通，程序会自动改用镜像
+`hf-mirror.com`；连不上也可以在「模型下载」里手动指定下载源或填代理，
+见[模型下载不动？](#模型下载不动)。
 
 ![界面](docs/screenshot.png)
 
@@ -52,6 +55,20 @@ pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 把这两个包安装目录里的 DLL 放到程序目录，或改用下面的源码方式运行。
 设置里的「设备」保持「自动」即可，检测不到显卡会自动退回 CPU。
 
+## 模型下载不动？
+
+报 `ConnectTimeout: [WinError 10060]`，或者「cannot find the appropriate snapshot
+folder」，都是连不上模型下载源，跟视频本身没关系。按顺序试：
+
+1. 界面上「模型下载」保持「自动选源」——官方源连不上时会自动换成
+   `hf-mirror.com` 镜像，多数情况到这一步就好了；
+2. 有代理 / VPN 就把地址填进旁边的输入框，例如 `http://127.0.0.1:7890`；
+3. 前两条都不行（公司内网、离线机器），在能联网的机器上把模型下好，
+   再把整个 `%USERPROFILE%\.cache\huggingface` 目录复制到这台机器的同一位置。
+
+设置存在 `%APPDATA%\subtitle-tool\settings.json`，命令行用的是同一份。
+模型下过一次之后完全走本地缓存，不再联网。
+
 ## 命令行用法
 
 批量处理和脚本化用命令行更方便：
@@ -68,6 +85,10 @@ subtitle-tool video.mkv --multi-language --target zh --layout bilingual --format
 
 # 批量处理整个目录
 subtitle-tool *.mp4 --target ja --model small --output-dir ./subs
+
+# 连不上官方源时指定镜像，或走代理
+subtitle-tool video.mp4 --target zh --model-source mirror
+subtitle-tool video.mp4 --target zh --proxy http://127.0.0.1:7890
 ```
 
 `--target` 接受 `zh` / `zho_Hans` / `中文（简体）` 三种写法，

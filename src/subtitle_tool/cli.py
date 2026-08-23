@@ -3,6 +3,7 @@
 import argparse
 import sys
 
+from . import hub
 from .asr import MODEL_SIZES, Cancelled, default_model
 from .audio import probe_tracks
 from .languages import FLORES_NAMES, describe_whisper, resolve_target, target_choices
@@ -10,6 +11,9 @@ from .pipeline import LAYOUTS, Engine, Options
 from .subtitles import FORMATS
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
 from .translate import MODEL_REPOS
+
+#: --model-source 的简写，也可以直接给一个自建源的地址
+MODEL_SOURCES = {"auto": hub.AUTO, "official": hub.OFFICIAL, "mirror": hub.MIRROR}
 
 
 def build_parser():
@@ -50,6 +54,12 @@ def build_parser():
         help=f"翻译模型（默认 {DEFAULT_TRANSLATE_MODEL}）",
     )
     parser.add_argument("--model-dir", help="模型缓存目录，默认用 HuggingFace 默认缓存")
+    parser.add_argument(
+        "--model-source",
+        help="模型下载源：auto（默认，官方源连不上就自动换镜像）/ official / mirror，"
+        "也可以直接给自建源的地址",
+    )
+    parser.add_argument("--proxy", help="下载模型走的代理，例如 http://127.0.0.1:7890")
     return parser
 
 
@@ -88,6 +98,13 @@ def main(argv=None) -> int:
         print(f"不支持的字幕格式：{','.join(unknown)}", file=sys.stderr)
         return 2
 
+    settings = hub.load()
+    if args.model_source:
+        settings.source = MODEL_SOURCES.get(args.model_source, args.model_source)
+    if args.proxy is not None:
+        settings.proxy = args.proxy
+    hub.apply(settings)
+
     options = Options(
         track_index=args.track - 1,
         source_language=args.language,
@@ -97,7 +114,7 @@ def main(argv=None) -> int:
         formats=formats,
         output_dir=args.output_dir,
     )
-    engine = Engine(args.model, args.device, args.translate_model, args.model_dir)
+    engine = Engine(args.model, args.device, args.translate_model, args.model_dir, _note)
 
     failed = 0
     for video in args.videos:
@@ -106,6 +123,10 @@ def main(argv=None) -> int:
             result = engine.run(video, options, progress=_print_progress)
         except Cancelled:
             return 130
+        except hub.DownloadError as error:
+            # 模型下不下来跟具体文件无关，后面的文件只会一模一样地再失败一遍
+            print(f"\r{' ' * 60}\r  ✗ {error}")
+            return 1
         except (ValueError, OSError) as error:
             # 批处理里一个文件坏掉不该中断其余文件，但退出码要如实反映失败
             print(f"\r{' ' * 60}\r  ✗ {error}")
@@ -124,6 +145,11 @@ def main(argv=None) -> int:
 
 def _print_progress(stage: str, fraction: float):
     print(f"\r  {stage} {fraction * 100:5.1f}%", end="", flush=True)
+
+
+def _note(message: str):
+    # 进度是用 \r 原地刷的，插话前先把那一行擦掉
+    print(f"\r{' ' * 60}\r  {message}")
 
 
 if __name__ == "__main__":

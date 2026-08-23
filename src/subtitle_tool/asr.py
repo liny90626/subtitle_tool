@@ -10,7 +10,9 @@ from typing import Callable, Optional
 
 import ctranslate2
 from faster_whisper import BatchedInferencePipeline, WhisperModel
+from faster_whisper.utils import download_model
 
+from . import hub
 from .audio import SAMPLE_RATE
 
 #: 可选模型，按「体积 / 速度 / 精度」从轻到重排列
@@ -84,14 +86,20 @@ class Transcriber:
         model_size: str = "small",
         device: str = "auto",
         download_root: Optional[str] = None,
+        notify: Optional[Callable[[str], None]] = None,
     ):
         self.device, self.compute_type = pick_device(device)
-        self.model = WhisperModel(
-            model_size,
-            device=self.device,
-            compute_type=self.compute_type,
-            download_root=download_root,
+        # 先自己把模型取到本地再交给 WhisperModel：这样下载走 hub 那套「缓存优先 +
+        # 挑通得了的源」，而不是 faster-whisper 直接连 huggingface.co
+        path = hub.fetch(
+            lambda local_only: download_model(
+                model_size, local_files_only=local_only, cache_dir=download_root
+            ),
+            f"识别模型 {model_size}",
+            download_root,
+            notify,
         )
+        self.model = WhisperModel(path, device=self.device, compute_type=self.compute_type)
         self.batched = BatchedInferencePipeline(model=self.model)
         self.model_size = model_size
 

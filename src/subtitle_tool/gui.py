@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import hub
 from .asr import MODEL_SIZES, Cancelled, default_model, pick_device
 from .audio import probe_tracks
 from .languages import FLORES_NAMES, describe_whisper, target_choices
@@ -46,6 +47,11 @@ LAYOUT_CHOICES = (
     ("双语对照", "bilingual"),
     ("只要原文", "source"),
 )
+SOURCE_CHOICES = (
+    ("自动选源", hub.AUTO),
+    ("官方 huggingface.co", hub.OFFICIAL),
+    ("镜像 hf-mirror.com", hub.MIRROR),
+)
 
 
 class Worker(QThread):
@@ -53,6 +59,7 @@ class Worker(QThread):
 
     progress = Signal(int, str, float)
     finished_file = Signal(int, object, object)  # 行号, Result, 异常
+    note = Signal(str)  # 模型下载之类的耗时提示，转回主线程写日志
     load_failed = Signal(object)
     all_done = Signal(object)  # 把加载好的 Engine 交还主线程复用
 
@@ -60,13 +67,14 @@ class Worker(QThread):
         super().__init__()
         self.jobs = jobs  # [(行号, 文件路径, Options), ...]
         self.engine = engine
-        self.engine_factory = engine_factory
+        self.engine_factory = engine_factory  # 收一个提示回调，返回加载好的 Engine
         self.cancel = threading.Event()
 
     def run(self):
         try:
             if self.engine is None:
-                self.engine = self.engine_factory()
+                # 在这个线程里加载，下载/初始化模型都不卡界面
+                self.engine = self.engine_factory(self.note.emit)
         except Exception as error:
             # 模型下载/加载失败（断网、磁盘不够）。不报出来的话线程直接死掉，
             # all_done 永远不发，界面会一直卡在「运行中」，开始按钮再也点不动
@@ -194,6 +202,17 @@ class MainWindow(QWidget):
         self.translate_model.setCurrentText(DEFAULT_TRANSLATE_MODEL)
         form.addRow("翻译模型", self.translate_model)
 
+        self.model_source = QComboBox()
+        for label, value in SOURCE_CHOICES:
+            self.model_source.addItem(label, value)
+        self.proxy = QLineEdit()
+        self.proxy.setPlaceholderText("代理，如 http://127.0.0.1:7890；留空表示不用")
+        self._load_download_settings()
+        download_row = QHBoxLayout()
+        download_row.addWidget(self.model_source)
+        download_row.addWidget(self.proxy, 1)
+        form.addRow("模型下载", download_row)
+
         self.formats = {}
         format_row = QHBoxLayout()
         for fmt in FORMATS:
@@ -213,6 +232,17 @@ class MainWindow(QWidget):
         output_row.addWidget(browse)
         form.addRow("输出目录", output_row)
         return box
+
+    def _load_download_settings(self):
+        """把上次存的下载源/代理填回界面。"""
+        settings = hub.load()
+        index = self.model_source.findData(settings.source)
+        if index < 0:
+            # 设置文件里存的是个自建源地址，补成一项，免得被悄悄改回「自动」
+            self.model_source.addItem(settings.source, settings.source)
+            index = self.model_source.count() - 1
+        self.model_source.setCurrentIndex(index)
+        self.proxy.setText(settings.proxy)
 
     def _build_actions(self):
         self.start = QPushButton("开始生成")
@@ -315,18 +345,32 @@ class MainWindow(QWidget):
             jobs.append((row, self.table.item(row, 0).data(Qt.UserRole), options))
             self.table.item(row, 2).setText("等待中")
 
+        self._save_download_settings()
+
         key = (self.model.currentText(), self._device(), self.translate_model.currentText())
         if key != self.engine_key:
             self.engine, self.engine_key = None, key
-            self._log(f"载入模型 {key[0]}（首次使用需要下载，请耐心等待）…")
+            self._log(f"载入模型 {key[0]}…")
 
-        self.worker = Worker(jobs, self.engine, lambda: Engine(key[0], key[1], key[2]))
+        self.worker = Worker(
+            jobs, self.engine, lambda notify: Engine(key[0], key[1], key[2], notify=notify)
+        )
+        self.worker.note.connect(self._log)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_file.connect(self._on_file_done)
         self.worker.load_failed.connect(self._on_load_failed)
         self.worker.all_done.connect(self._on_all_done)
         self._set_running(True)
         self.worker.start()
+
+    def _save_download_settings(self):
+        """下载源/代理立刻生效并存下来，命令行下次也用这一份。"""
+        settings = hub.Settings(self.model_source.currentData(), self.proxy.text().strip())
+        hub.apply(settings)
+        try:
+            hub.save(settings)
+        except OSError as error:
+            self._log(f"⚠ 下载设置没能存下来（{error}），本次运行仍然生效")
 
     def _device(self):
         return {"自动": "auto", "CPU": "cpu", "GPU (CUDA)": "cuda"}[self.device.currentText()]
@@ -347,6 +391,8 @@ class MainWindow(QWidget):
             self.layout_mode,
             self.translate_model,
             self.multi_language,
+            self.model_source,
+            self.proxy,
             self.output_dir,
         ):
             widget.setEnabled(not running)
@@ -377,7 +423,9 @@ class MainWindow(QWidget):
         self._log(f"✗ 模型加载失败：{error}")
         for row in range(self.table.rowCount()):
             self.table.item(row, 2).setText("未开始")
-        QMessageBox.critical(self, "模型加载失败", f"{error}\n\n首次使用需要联网下载模型。")
+        # 下载失败的提示里已经写了怎么办，别再叠一句正确的废话
+        hint = "" if isinstance(error, hub.DownloadError) else "\n\n首次使用需要联网下载模型。"
+        QMessageBox.critical(self, "模型加载失败", f"{error}{hint}")
 
     def _on_all_done(self, engine):
         self.engine = engine

@@ -51,24 +51,31 @@ class Engine:
         device: str = "auto",
         translate_model: str = DEFAULT_TRANSLATE_MODEL,
         download_root: Optional[str] = None,
+        notify: Optional[Callable[[str], None]] = None,
     ):
         self.device = device
         self.model_size = model_size or default_model(device)
         self.translate_model = translate_model
         self.download_root = download_root
+        #: 首次下载模型这类「要等很久」的事情通过它告诉用户，None 表示不报
+        self.notify = notify
         self._transcriber = None
         self._translator = None
 
     @property
     def transcriber(self) -> Transcriber:
         if self._transcriber is None:
-            self._transcriber = Transcriber(self.model_size, self.device, self.download_root)
+            self._transcriber = Transcriber(
+                self.model_size, self.device, self.download_root, self.notify
+            )
         return self._transcriber
 
     @property
     def translator(self) -> Translator:
         if self._translator is None:
-            self._translator = Translator(self.translate_model, self.device, self.download_root)
+            self._translator = Translator(
+                self.translate_model, self.device, self.download_root, self.notify
+            )
         return self._translator
 
     def run(
