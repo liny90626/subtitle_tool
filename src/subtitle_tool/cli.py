@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from .asr import DEFAULT_MODEL, MODEL_SIZES, Cancelled
+from .asr import MODEL_SIZES, Cancelled, default_model
 from .audio import probe_tracks
 from .languages import FLORES_NAMES, describe_whisper, resolve_target, target_choices
 from .pipeline import LAYOUTS, Engine, Options
@@ -21,11 +21,12 @@ def build_parser():
     parser.add_argument("--list-tracks", action="store_true", help="只列出音轨信息后退出")
     parser.add_argument("--list-languages", action="store_true", help="列出可选目标语种后退出")
     parser.add_argument("--track", type=int, default=1, help="使用第几条音轨，从 1 开始（默认 1）")
+    fallback = default_model()
     parser.add_argument(
         "--model",
-        default=DEFAULT_MODEL,
+        default=fallback,
         choices=MODEL_SIZES,
-        help=f"识别模型（默认 {DEFAULT_MODEL}）",
+        help=f"识别模型（按当前设备默认 {fallback}）",
     )
     parser.add_argument(
         "--device", default="auto", choices=("auto", "cpu", "cuda"), help="推理设备（默认自动）"

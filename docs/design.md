@@ -104,7 +104,21 @@ faster-whisper 的 `multilingual=True` 会逐窗口重判语种并切换解码�
 回看原始波形补测语种，组内共享结果——逐段测太贵（每次要跑一遍编码器，而字幕条常常
 只有几秒）。
 
-### 3.5 其它
+### 3.5 默认模型跟着设备走
+
+同一段 60 秒素材，8 核 CPU、int8：
+
+| 模型 | 转写耗时 | 相对实时 |
+| --- | --- | --- |
+| `base` | 6.4s | 9.34× |
+| `small` | 22.0s | 2.72× |
+| `large-v3-turbo` | 83.2s | 0.72× |
+
+`large-v3-turbo` 在 CPU 上慢于实时，做默认值会让 1 小时的视频跑 80 多分钟，
+而免安装包默认就是 CPU 推理。因此启动时用 `ctranslate2.get_cuda_device_count()`
+探测显卡：有 GPU 默认 `large-v3-turbo`，没有则默认 `small`。
+
+### 3.6 其它
 
 - `condition_on_previous_text=False`：长视频一旦出现幻觉会以上文为条件自我强化成复读，
   牺牲少量上下文连贯性换稳定性

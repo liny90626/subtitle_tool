@@ -23,7 +23,7 @@ MODEL_SIZES = (
     "distil-large-v3",
     "large-v3-turbo",
 )
-DEFAULT_MODEL = "large-v3-turbo"
+
 
 #: 单条字幕的时长上限，取通行的 7 秒
 MAX_CUE_SECONDS = 7.0
@@ -54,6 +54,16 @@ class Segment:
     language: Optional[str] = None  #: 该段的语种；多语种模式下逐段可能不同
 
 
+def default_model(device: str = "auto") -> str:
+    """按实际可用的设备给默认模型。
+
+    实测 8 核 CPU int8：base 9.3x 实时、small 2.7x、large-v3-turbo 只有 0.72x
+    ——比视频本身还慢，1 小时的片子要跑 80 多分钟，不能当 CPU 默认值。
+    有 GPU 时 turbo 又快又准，就上 turbo。
+    """
+    return "large-v3-turbo" if pick_device(device)[0] == "cuda" else "small"
+
+
 def pick_device(preference: str = "auto") -> tuple[str, str]:
     """选定推理设备与量化精度，返回 ``(device, compute_type)``。
 
@@ -71,7 +81,7 @@ class Transcriber:
 
     def __init__(
         self,
-        model_size: str = DEFAULT_MODEL,
+        model_size: str = "small",
         device: str = "auto",
         download_root: Optional[str] = None,
     ):

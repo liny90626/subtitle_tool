@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .asr import DEFAULT_MODEL, MODEL_SIZES, Cancelled
+from .asr import MODEL_SIZES, Cancelled, default_model, pick_device
 from .audio import probe_tracks
 from .languages import FLORES_NAMES, describe_whisper, target_choices
 from .pipeline import Engine, Options
@@ -145,13 +145,15 @@ class MainWindow(QWidget):
 
         self.model = QComboBox()
         self.model.addItems(MODEL_SIZES)
-        self.model.setCurrentText(DEFAULT_MODEL)
+        self.model.setCurrentText(default_model())
         self.device = QComboBox()
         self.device.addItems(["自动", "CPU", "GPU (CUDA)"])
+        detected = "检测到 NVIDIA 显卡" if pick_device()[0] == "cuda" else "未检测到显卡，用 CPU"
         engine_row = QHBoxLayout()
         engine_row.addWidget(self.model, 1)
         engine_row.addWidget(QLabel("设备"))
         engine_row.addWidget(self.device, 1)
+        engine_row.addWidget(QLabel(f"（{detected}）"))
         form.addRow("识别模型", engine_row)
 
         self.multi_language = QCheckBox("音轨里多种语言混说，逐段识别（会慢一些）")

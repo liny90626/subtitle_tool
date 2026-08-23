@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from .asr import DEFAULT_MODEL, Transcriber
+from .asr import Transcriber, default_model
 from .audio import AudioTrack, decode_track, probe_tracks
 from .languages import describe_whisper, flores_of, short_code
 from .subtitles import Cue, render, stretch_cues
@@ -47,13 +47,13 @@ class Engine:
 
     def __init__(
         self,
-        model_size: str = DEFAULT_MODEL,
+        model_size: Optional[str] = None,
         device: str = "auto",
         translate_model: str = DEFAULT_TRANSLATE_MODEL,
         download_root: Optional[str] = None,
     ):
-        self.model_size = model_size
         self.device = device
+        self.model_size = model_size or default_model(device)
         self.translate_model = translate_model
         self.download_root = download_root
         self._transcriber = None
