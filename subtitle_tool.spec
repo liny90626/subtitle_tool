@@ -32,6 +32,9 @@ excludes = [
     "pytest",
     "PIL",
     "torch",
+    # Xet 是 huggingface_hub 的加速下载后端，11MB 的原生扩展。没有它会自动退回普通
+    # HTTP，实测下模型一样快；顺带也省掉了它从自己的线程回调进 Python 这条路
+    "hf_xet",
 ] + [
     f"PySide6.{module}"
     for module in (
@@ -86,6 +89,25 @@ excludes = [
     )
 ]
 
+# PySide6 的钩子会把整套 Qt 收进来，光按模块名排除拦不住——Qt 的动态库是按依赖关系
+# 抓的。QML/Quick 那一整套是被虚拟键盘输入法插件顺带拖进来的，界面只用 QtWidgets 根本
+# 用不上；opengl32sw 是 Qt 的软件 OpenGL 兜底，widgets 走光栅渲染也用不到。
+# 删错了 CI 的冒烟测试会当场暴露——那一步真的把界面拉起来并跑完整条流水线。
+UNUSED = (
+    "qt6quick",
+    "qt6qml",
+    "qt6virtualkeyboard",
+    "qt6pdf",
+    "platforminputcontexts",
+    "opengl32sw",
+)
+
+
+def wanted(entry):
+    name = entry[0].replace("\\", "/").lower()
+    return not any(marker in name for marker in UNUSED)
+
+
 a = Analysis(
     ["scripts/launch_gui.py"],
     pathex=["src"],
@@ -95,6 +117,11 @@ a = Analysis(
     excludes=excludes,
     noarchive=False,
 )
+
+dropped = len(a.binaries) + len(a.datas)
+a.binaries = [entry for entry in a.binaries if wanted(entry)]
+a.datas = [entry for entry in a.datas if wanted(entry)]
+print(f"dropped {dropped - len(a.binaries) - len(a.datas)} unused Qt/Xet files")
 
 pyz = PYZ(a.pure)
 
