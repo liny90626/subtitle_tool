@@ -25,8 +25,9 @@ MODEL_SIZES = (
 )
 DEFAULT_MODEL = "large-v3-turbo"
 
-#: 单条字幕的上限。时长取通行的 7 秒；字数按两行算，CJK 字宽是拉丁字母两倍所以减半。
+#: 单条字幕的时长上限，取通行的 7 秒
 MAX_CUE_SECONDS = 7.0
+#: 单条字幕的字数上限，按两行算；CJK 字宽是拉丁字母两倍所以减半
 _LATIN_CUE_CHARS = 84
 _CJK_CUE_CHARS = 40
 _WIDE_LANGUAGES = frozenset({"zh", "ja", "yue", "ko"})
@@ -184,6 +185,10 @@ def _to_cues(raw, language: str) -> list[Segment]:
     VAD 会把一整段连续语音（讲座、新闻）交给模型，出来就是一条 30 秒、几百字的
     结果，直接写进 SRT 没法看。这里按词级时间戳重新切分：优先断在停顿和句末标点上，
     再用时长/字数兜底。
+
+    字数上限按两行算，双语排版下译文会再占一到两行。不为了凑行数把字幕条切得更短：
+    切短了每条只剩半句，翻译模型拿到的是残缺片段，译文会碎成「本软件的副本和相关」
+    这种读不通的东西——译文连贯比少一行重要。
     """
     if not raw.words:
         text = raw.text.strip()
