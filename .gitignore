@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# 模型缓存与运行产物
+models/
+*.srt
+*.vtt
+*.ass
+!tests/data/*.srt
+
+# 打包产物
+*.spec.bak
+release/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
