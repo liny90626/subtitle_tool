@@ -9,7 +9,7 @@ import gc
 import io
 import itertools
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import av
 import numpy as np
@@ -47,7 +47,7 @@ class AudioTrack:
         return " · ".join(parts)
 
 
-def probe_tracks(path: str) -> List[AudioTrack]:
+def probe_tracks(path: str) -> list[AudioTrack]:
     """列出媒体文件的全部音轨。无音轨时返回空列表。"""
     with av.open(path, mode="r", metadata_errors="ignore") as container:
         return [_describe(container, i, s) for i, s in enumerate(container.streams.audio)]

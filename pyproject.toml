@@ -31,5 +31,10 @@ packages = ["src/subtitle_tool"]
 line-length = 100
 target-version = "py39"
 
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF"]
+# 本项目注释与用户可见文案是中文，全角标点会被判成「易混淆字符」，全是误报
+ignore = ["RUF001", "RUF002", "RUF003"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

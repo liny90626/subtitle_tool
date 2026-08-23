@@ -25,3 +25,6 @@ release/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 由 scripts/make_fixture.py 生成
+tests/data/multitrack.mkv

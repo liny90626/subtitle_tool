@@ -123,8 +123,10 @@ FLORES_NAMES = {f: n for _, f, _, n in _TABLE if f}
 #: Whisper 识别码 -> 中文名
 WHISPER_NAMES = {w: n for w, _, _, n in _TABLE if w}
 
-#: 音轨元数据里的 ISO 639-2 码（B/T 两套） -> 中文名
+#: 音轨元数据里的语言码 -> 中文名。同时收 ISO 639-2 三字母码（B/T 两套写法）和
+#: BCP-47 常见的两字母码——``zh-CN``、``en-US`` 这类标签在网络片源里很常见。
 _TAG_NAMES = {c: n for _, _, codes, n in _TABLE for c in codes.split()}
+_TAG_NAMES.update({w: n for w, _, _, n in _TABLE if w})
 
 
 def flores_of(whisper_code):
@@ -148,3 +150,29 @@ def describe_tag(tag):
 def target_choices():
     """可选翻译目标语种，按中文名排序，返回 ``[(flores 码, 中文名), ...]``。"""
     return sorted(FLORES_NAMES.items(), key=lambda kv: kv[1])
+
+
+_SHORT_CODES = {f: w for w, f in WHISPER_TO_FLORES.items()}
+_SHORT_CODES["zho_Hant"] = "zh-Hant"
+
+
+def short_code(flores_code):
+    """FLORES-200 码转适合做文件名后缀的短码，如 ``zho_Hans`` -> ``zh``。"""
+    return _SHORT_CODES.get(flores_code, flores_code)
+
+
+def resolve_target(text):
+    """把用户输入的目标语种解析成 FLORES-200 码。
+
+    接受 FLORES 码(``zho_Hans``)、短码(``zh``)、中文名(``中文（简体）``)三种写法，
+    无法识别时返回 None。
+    """
+    if text in FLORES_NAMES:
+        return text
+    for flores, short in _SHORT_CODES.items():
+        if short == text:
+            return flores
+    for flores, name in FLORES_NAMES.items():
+        if name == text:
+            return flores
+    return None
