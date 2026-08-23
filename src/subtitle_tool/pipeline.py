@@ -79,9 +79,14 @@ class Engine:
         cancel=None,
     ) -> Result:
         """跑完整条流水线并写出字幕文件。"""
+        name = os.path.basename(path)
         tracks = probe_tracks(path)
         if not tracks:
-            raise ValueError(f"{os.path.basename(path)} 里没有音轨，无法生成字幕")
+            raise ValueError(f"{name} 里没有音轨，无法生成字幕")
+        if not 0 <= options.track_index < len(tracks):
+            raise ValueError(
+                f"{name} 只有 {len(tracks)} 条音轨，没有第 {options.track_index + 1} 条"
+            )
         track = tracks[options.track_index]
         reporter = _Reporter(_plan(options), progress)
 
@@ -100,6 +105,9 @@ class Engine:
             progress=reporter.stage("语音转写"),
             cancel=cancel,
         )
+        if not segments:
+            # 只有音乐/环境音的音轨会走到这里。写个空字幕文件出去等于让用户白等，直接报错。
+            raise ValueError(f"{name} 的第 {options.track_index + 1} 条音轨里没有检测到语音")
         for seg in segments:
             seg.language = seg.language or source
 
