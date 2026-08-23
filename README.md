@@ -14,7 +14,7 @@
 
 1. 到 [Releases](https://github.com/liny90626/subtitle_tool/releases) 下载
    `subtitle-tool-windows-x64.zip`
-2. 解压到任意目录，双击 `字幕生成工具.exe`（免安装）
+2. 解压到任意目录，双击 `SubtitleTool.exe`（免安装）
 3. 把视频拖进窗口 → 选音轨和目标语言 → 点「开始生成」
 
 首次运行会自动下载模型（识别模型按所选大小 75MB~1.6GB，翻译模型 620MB），
@@ -72,6 +72,12 @@ subtitle-tool *.mp4 --target ja --model small --output-dir ./subs
 
 `--target` 接受 `zh` / `zho_Hans` / `中文（简体）` 三种写法，
 `--list-languages` 可以看全部可选语言。
+
+免安装包里的 `SubtitleTool.exe` 带参数运行时就是命令行，不用另外装 Python：
+
+```powershell
+.\SubtitleTool.exe video.mkv --target zh
+```
 
 ## 从源码运行
 

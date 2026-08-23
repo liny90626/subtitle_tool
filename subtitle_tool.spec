@@ -61,7 +61,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="字幕生成工具",
+    name="SubtitleTool",  # 用 ASCII 名，免得打包/压缩/快捷方式在非 UTF-8 代码页下出问题
     debug=False,
     strip=False,
     upx=False,  # UPX 压缩过的原生库在部分杀毒软件下会被拦
