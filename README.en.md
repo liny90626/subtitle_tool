@@ -87,6 +87,9 @@ The settings live in `%APPDATA%\subtitle-tool\settings.json` and are shared with
 line. Once a model has been downloaded it is loaded from the local cache and the program
 stops going online for it.
 
+If the program ever quits unexpectedly, `%APPDATA%\subtitle-tool\subtitle-tool.log` holds the
+traceback — please attach it when reporting the problem.
+
 ## Command line
 
 Batch jobs and scripting are easier from the command line:

@@ -78,6 +78,9 @@ folder」，都是连不上模型下载源，跟视频本身没关系。按顺�
 设置存在 `%APPDATA%\subtitle-tool\settings.json`，命令行用的是同一份。
 模型下过一次之后完全走本地缓存，不再联网。
 
+程序要是异常退出，`%APPDATA%\subtitle-tool\subtitle-tool.log` 里会有堆栈，
+提 issue 时带上它。
+
 ## 命令行用法
 
 批量处理和脚本化用命令行更方便：
