@@ -16,6 +16,7 @@ from tokenizers import Tokenizer
 
 from . import hub
 from .asr import Cancelled, pick_device
+from .i18n import t
 
 #: 翻译模型仓库。600M 约 620MB，1.3B 约 1.4GB、质量更好但慢 2 倍以上。
 MODEL_REPOS = {
@@ -41,7 +42,7 @@ class Translator:
             lambda local_only: snapshot_download(
                 MODEL_REPOS[model], cache_dir=download_root, local_files_only=local_only
             ),
-            f"翻译模型 {model}",
+            t("翻译模型 {model}", model=model),
             download_root,
             notify,
         )

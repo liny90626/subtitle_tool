@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 from .asr import Transcriber, default_model
 from .audio import AudioTrack, decode_track, probe_tracks
+from .i18n import t
 from .languages import describe_whisper, flores_of, short_code
 from .subtitles import Cue, render, stretch_cues
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
@@ -89,10 +90,15 @@ class Engine:
         name = os.path.basename(path)
         tracks = probe_tracks(path)
         if not tracks:
-            raise ValueError(f"{name} 里没有音轨，无法生成字幕")
+            raise ValueError(t("{name} 里没有音轨，无法生成字幕", name=name))
         if not 0 <= options.track_index < len(tracks):
             raise ValueError(
-                f"{name} 只有 {len(tracks)} 条音轨，没有第 {options.track_index + 1} 条"
+                t(
+                    "{name} 只有 {total} 条音轨，没有第 {wanted} 条",
+                    name=name,
+                    total=len(tracks),
+                    wanted=options.track_index + 1,
+                )
             )
         track = tracks[options.track_index]
         reporter = _Reporter(_plan(options), progress)
@@ -114,7 +120,13 @@ class Engine:
         )
         if not segments:
             # 只有音乐/环境音的音轨会走到这里。写个空字幕文件出去等于让用户白等，直接报错。
-            raise ValueError(f"{name} 的第 {options.track_index + 1} 条音轨里没有检测到语音")
+            raise ValueError(
+                t(
+                    "{name} 的第 {number} 条音轨里没有检测到语音",
+                    name=name,
+                    number=options.track_index + 1,
+                )
+            )
         for seg in segments:
             seg.language = seg.language or source
 
@@ -145,7 +157,9 @@ class Engine:
         for language, indexes in groups.items():
             source = flores_of(language)
             if source is None:
-                raise ValueError(f"翻译模型不支持源语种 {describe_whisper(language)}")
+                raise ValueError(
+                    t("翻译模型不支持源语种 {language}", language=describe_whisper(language))
+                )
             texts = self.translator.translate(
                 [segments[i].text for i in indexes], source, target, cancel=cancel
             )

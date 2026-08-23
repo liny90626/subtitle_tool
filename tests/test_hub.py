@@ -1,10 +1,9 @@
-import json
 import os
 import sys
 
 import pytest
 
-from subtitle_tool import hub
+from subtitle_tool import hub, settings
 
 
 @pytest.fixture(autouse=True)
@@ -73,61 +72,38 @@ def _snapshot(tmp_path, name, files=hub._REQUIRED_FILES):
     return str(directory)
 
 
-# ---------- 设置的读写 ----------
-
-
-def test_settings_round_trip():
-    hub.save(hub.Settings(hub.MIRROR, "http://127.0.0.1:7890"))
-    assert hub.load() == hub.Settings(hub.MIRROR, "http://127.0.0.1:7890")
-
-
-def test_missing_or_broken_settings_fall_back_to_defaults():
-    assert hub.load() == hub.Settings()
-    os.makedirs(os.path.dirname(hub.config_path()), exist_ok=True)
-    with open(hub.config_path(), "w", encoding="utf-8") as handle:
-        handle.write("{ 这不是 json")
-    # 设置文件坏掉不该让程序起不来
-    assert hub.load() == hub.Settings()
-
-
-def test_saved_settings_are_readable_json():
-    hub.save(hub.Settings(hub.MIRROR, ""))
-    with open(hub.config_path(), encoding="utf-8") as handle:
-        assert json.load(handle) == {"source": hub.MIRROR, "proxy": ""}
-
-
 # ---------- 选源 ----------
 
 
 def test_explicit_source_is_used_without_probing(monkeypatch):
     monkeypatch.setattr(hub, "_usable", lambda source: pytest.fail("指定了源就不该再探测"))
-    hub.apply(hub.Settings(source=hub.MIRROR))
+    hub.apply(settings.Settings(source=hub.MIRROR))
     assert hub.endpoint() == hub.MIRROR
 
 
 def test_auto_keeps_official_when_it_works(monkeypatch):
     monkeypatch.setattr(hub, "_usable", lambda source: source == hub.OFFICIAL)
-    hub.apply(hub.Settings())
+    hub.apply(settings.Settings())
     assert hub.endpoint() == hub.OFFICIAL
 
 
 def test_auto_switches_to_mirror_when_official_is_unreachable(monkeypatch):
     monkeypatch.setattr(hub, "_usable", lambda source: source == hub.MIRROR)
-    hub.apply(hub.Settings())
+    hub.apply(settings.Settings())
     assert hub.endpoint() == hub.MIRROR
 
 
 def test_auto_still_tries_official_when_every_probe_fails(monkeypatch):
     # 探测只用来加速选源，全都探不过时不能把本来能下的情况直接挡掉
     monkeypatch.setattr(hub, "_usable", lambda source: False)
-    hub.apply(hub.Settings())
+    hub.apply(settings.Settings())
     assert hub.endpoint() == hub.OFFICIAL
 
 
 def test_source_is_probed_once_per_process(monkeypatch):
     probed = []
     monkeypatch.setattr(hub, "_usable", lambda source: probed.append(source) or True)
-    hub.apply(hub.Settings())
+    hub.apply(settings.Settings())
     assert hub.endpoint() == hub.endpoint() == hub.OFFICIAL
     assert probed == [hub.OFFICIAL]
 
@@ -135,7 +111,7 @@ def test_source_is_probed_once_per_process(monkeypatch):
 def test_user_set_hf_endpoint_wins_over_auto(monkeypatch):
     monkeypatch.setattr(hub, "_ENV_ENDPOINT", "https://hub.example.com")
     monkeypatch.setattr(hub, "_usable", lambda source: pytest.fail("自建源不该被探测掉"))
-    hub.apply(hub.Settings())
+    hub.apply(settings.Settings())
     assert hub.endpoint() == "https://hub.example.com"
 
 
@@ -261,18 +237,18 @@ def test_switching_source_redirects_huggingface_hub():
 
 
 def test_proxy_goes_into_the_environment_both_stacks_read():
-    hub.apply(hub.Settings(proxy="http://127.0.0.1:7890"))
+    hub.apply(settings.Settings(proxy="http://127.0.0.1:7890"))
     assert os.environ["HTTP_PROXY"] == "http://127.0.0.1:7890"
     assert os.environ["https_proxy"] == "http://127.0.0.1:7890"
 
 
 def test_clearing_the_proxy_removes_what_we_set():
-    hub.apply(hub.Settings(proxy="http://127.0.0.1:7890"))
-    hub.apply(hub.Settings())
+    hub.apply(settings.Settings(proxy="http://127.0.0.1:7890"))
+    hub.apply(settings.Settings())
     assert "HTTP_PROXY" not in os.environ
 
 
 def test_clearing_the_proxy_leaves_the_system_one_alone(monkeypatch):
     monkeypatch.setenv("HTTP_PROXY", "http://company:8080")
-    hub.apply(hub.Settings())
+    hub.apply(settings.Settings())
     assert os.environ["HTTP_PROXY"] == "http://company:8080"

@@ -14,6 +14,7 @@ from faster_whisper.utils import download_model
 
 from . import hub
 from .audio import SAMPLE_RATE
+from .i18n import t
 
 #: 可选模型，按「体积 / 速度 / 精度」从轻到重排列
 MODEL_SIZES = (
@@ -95,7 +96,7 @@ class Transcriber:
             lambda local_only: download_model(
                 model_size, local_files_only=local_only, cache_dir=download_root
             ),
-            f"识别模型 {model_size}",
+            t("识别模型 {model}", model=model_size),
             download_root,
             notify,
         )

@@ -3,67 +3,81 @@
 import argparse
 import sys
 
-from . import hub
+from . import hub, i18n, settings
 from .asr import MODEL_SIZES, Cancelled, default_model
 from .audio import probe_tracks
-from .languages import FLORES_NAMES, describe_whisper, resolve_target, target_choices
+from .i18n import t
+from .languages import describe_whisper, flores_name, resolve_target, target_choices
 from .pipeline import LAYOUTS, Engine, Options
 from .subtitles import FORMATS
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
 from .translate import MODEL_REPOS
 
 #: --model-source 的简写，也可以直接给一个自建源的地址
-MODEL_SOURCES = {"auto": hub.AUTO, "official": hub.OFFICIAL, "mirror": hub.MIRROR}
+MODEL_SOURCES = {"auto": settings.AUTO, "official": hub.OFFICIAL, "mirror": hub.MIRROR}
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="subtitle-tool",
-        description="从视频音轨生成字幕：自动识别语种，可翻译为指定目标语言。",
+        description=t("从视频音轨生成字幕：自动识别语种，可翻译为指定目标语言。"),
     )
-    parser.add_argument("videos", nargs="*", help="视频/音频文件，可传多个")
-    parser.add_argument("--list-tracks", action="store_true", help="只列出音轨信息后退出")
-    parser.add_argument("--list-languages", action="store_true", help="列出可选目标语种后退出")
-    parser.add_argument("--track", type=int, default=1, help="使用第几条音轨，从 1 开始（默认 1）")
+    parser.add_argument("videos", nargs="*", help=t("视频/音频文件，可传多个"))
+    parser.add_argument("--list-tracks", action="store_true", help=t("只列出音轨信息后退出"))
+    parser.add_argument("--list-languages", action="store_true", help=t("列出可选目标语种后退出"))
+    parser.add_argument(
+        "--track", type=int, default=1, help=t("使用第几条音轨，从 1 开始（默认 1）")
+    )
     fallback = default_model()
     parser.add_argument(
         "--model",
         default=fallback,
         choices=MODEL_SIZES,
-        help=f"识别模型（按当前设备默认 {fallback}）",
+        help=t("识别模型（按当前设备默认 {default}）", default=fallback),
     )
     parser.add_argument(
-        "--device", default="auto", choices=("auto", "cpu", "cuda"), help="推理设备（默认自动）"
+        "--device",
+        default="auto",
+        choices=("auto", "cpu", "cuda"),
+        help=t("推理设备（默认自动）"),
     )
-    parser.add_argument("--language", help="指定源语种的 Whisper 码，默认自动识别")
+    parser.add_argument("--language", help=t("指定源语种的 Whisper 码，默认自动识别"))
     parser.add_argument(
-        "--multi-language", action="store_true", help="一条音轨内多语言混说时逐段识别语种"
+        "--multi-language", action="store_true", help=t("一条音轨内多语言混说时逐段识别语种")
     )
-    parser.add_argument("--target", help="字幕目标语种，接受 zh / zho_Hans / 中文（简体） 三种写法")
+    parser.add_argument("--target", help=t("字幕目标语种，接受短码、FLORES 码或语种名"))
     parser.add_argument(
-        "--layout", default="target", choices=LAYOUTS, help="译文/原文/双语排版（默认 target）"
+        "--layout", default="target", choices=LAYOUTS, help=t("译文/原文/双语排版（默认 target）")
     )
     parser.add_argument(
-        "--format", default="srt", help=f"输出格式，逗号分隔，可选 {'/'.join(FORMATS)}（默认 srt）"
+        "--format",
+        default="srt",
+        help=t("输出格式，逗号分隔，可选 {formats}（默认 srt）", formats="/".join(FORMATS)),
     )
-    parser.add_argument("--output-dir", help="输出目录，默认与视频同目录")
+    parser.add_argument("--output-dir", help=t("输出目录，默认与视频同目录"))
     parser.add_argument(
         "--translate-model",
         default=DEFAULT_TRANSLATE_MODEL,
         choices=tuple(MODEL_REPOS),
-        help=f"翻译模型（默认 {DEFAULT_TRANSLATE_MODEL}）",
+        help=t("翻译模型（默认 {default}）", default=DEFAULT_TRANSLATE_MODEL),
     )
-    parser.add_argument("--model-dir", help="模型缓存目录，默认用 HuggingFace 默认缓存")
+    parser.add_argument("--model-dir", help=t("模型缓存目录，默认用 HuggingFace 默认缓存"))
     parser.add_argument(
         "--model-source",
-        help="模型下载源：auto（默认，官方源连不上就自动换镜像）/ official / mirror，"
-        "也可以直接给自建源的地址",
+        help=t("模型下载源：auto（默认，官方源连不上自动换镜像）/ official / mirror / 自建源地址"),
     )
-    parser.add_argument("--proxy", help="下载模型走的代理，例如 http://127.0.0.1:7890")
+    parser.add_argument("--proxy", help=t("下载模型走的代理，例如 http://127.0.0.1:7890"))
+    parser.add_argument(
+        "--lang", choices=i18n.LANGUAGES, help=t("界面语言：auto（跟随系统）/ zh / en")
+    )
     return parser
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    saved = settings.load()
+    # --lang 得赶在建 parser 之前生效，否则 --help 打出来还是上一种语言
+    i18n.use(_early_language(argv) or saved.language)
     args = build_parser().parse_args(argv)
 
     if args.list_languages:
@@ -79,7 +93,14 @@ def main(argv=None) -> int:
         for video in args.videos:
             print(video)
             for track in probe_tracks(video):
-                print(f"  {track.label} | 时长 {track.duration:.1f}s")
+                print(
+                    "  "
+                    + t(
+                        "{label} | 时长 {duration:.1f}s",
+                        label=track.label,
+                        duration=track.duration,
+                    )
+                )
         return 0
 
     target = None
@@ -87,7 +108,10 @@ def main(argv=None) -> int:
         target = resolve_target(args.target)
         if target is None:
             print(
-                f"无法识别的目标语种：{args.target}（用 --list-languages 查看可选值）",
+                t(
+                    "无法识别的目标语种：{value}（用 --list-languages 查看可选值）",
+                    value=args.target,
+                ),
                 file=sys.stderr,
             )
             return 2
@@ -95,15 +119,14 @@ def main(argv=None) -> int:
     formats = tuple(f.strip() for f in args.format.split(",") if f.strip())
     unknown = [f for f in formats if f not in FORMATS]
     if unknown:
-        print(f"不支持的字幕格式：{','.join(unknown)}", file=sys.stderr)
+        print(t("不支持的字幕格式：{format}", format=",".join(unknown)), file=sys.stderr)
         return 2
 
-    settings = hub.load()
     if args.model_source:
-        settings.source = MODEL_SOURCES.get(args.model_source, args.model_source)
+        saved.source = MODEL_SOURCES.get(args.model_source, args.model_source)
     if args.proxy is not None:
-        settings.proxy = args.proxy
-    hub.apply(settings)
+        saved.proxy = args.proxy
+    hub.apply(saved)
 
     options = Options(
         track_index=args.track - 1,
@@ -125,31 +148,49 @@ def main(argv=None) -> int:
             return 130
         except hub.DownloadError as error:
             # 模型下不下来跟具体文件无关，后面的文件只会一模一样地再失败一遍
-            print(f"\r{' ' * 60}\r  ✗ {error}")
+            _overwrite(f"  ✗ {error}")
             return 1
         except (ValueError, OSError) as error:
             # 批处理里一个文件坏掉不该中断其余文件，但退出码要如实反映失败
-            print(f"\r{' ' * 60}\r  ✗ {error}")
+            _overwrite(f"  ✗ {error}")
             failed += 1
             continue
-        print(f"\r{' ' * 60}\r  源语种 {describe_whisper(result.source_language)}", end="")
-        if args.multi_language:
-            print(f"，共 {len({s[2] for s in result.language_spans})} 种语言", end="")
-        if target:
-            print(f" → {FLORES_NAMES[target]}", end="")
-        print(f"，{len(result.cues)} 条字幕")
+        _overwrite("  " + _summary(result, args.multi_language, target))
         for out in result.outputs:
             print(f"  ✓ {out}")
     return 1 if failed else 0
 
 
+def _summary(result, multi_language, target) -> str:
+    text = t("源语种 {language}", language=describe_whisper(result.source_language))
+    if multi_language:
+        text += t("，共 {count} 种语言", count=len({s[2] for s in result.language_spans}))
+    if target:
+        text += f" → {flores_name(target)}"
+    return text + t("，{count} 条字幕", count=len(result.cues))
+
+
+def _early_language(argv):
+    """在 argparse 之前把 --lang 抠出来。"""
+    for index, arg in enumerate(argv):
+        if arg == "--lang" and index + 1 < len(argv):
+            return argv[index + 1]
+        if arg.startswith("--lang="):
+            return arg.split("=", 1)[1]
+    return None
+
+
 def _print_progress(stage: str, fraction: float):
-    print(f"\r  {stage} {fraction * 100:5.1f}%", end="", flush=True)
+    print(f"\r  {t(stage)} {fraction * 100:5.1f}%", end="", flush=True)
 
 
 def _note(message: str):
-    # 进度是用 \r 原地刷的，插话前先把那一行擦掉
-    print(f"\r{' ' * 60}\r  {message}")
+    _overwrite(f"  {message}")
+
+
+def _overwrite(message: str):
+    """进度是用 \\r 原地刷的，插话前先把那一行擦掉。"""
+    print(f"\r{' ' * 60}\r{message}")
 
 
 if __name__ == "__main__":

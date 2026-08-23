@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from .i18n import t
+
 FORMATS = ("srt", "vtt", "txt")
 
 #: 单行最大字符数。拉丁字母按通行的 42 字符，CJK 因字宽是两倍取 20。
@@ -40,7 +42,7 @@ def render(cues: list[Cue], fmt: str) -> str:
         return _render_vtt(cues)
     if fmt == "txt":
         return "\n".join(cue.text.replace("\n", " ") for cue in cues) + "\n"
-    raise ValueError(f"不支持的字幕格式：{fmt}")
+    raise ValueError(t("不支持的字幕格式：{format}", format=fmt))
 
 
 def _render_srt(cues: list[Cue]) -> str:

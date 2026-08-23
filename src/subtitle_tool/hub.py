@@ -12,19 +12,17 @@ folder」——看着像程序坏了，其实只是网络到不了下载源。
 - 下载失败给出照着做就能解决的中文提示，而不是把英文调用栈甩给用户。
 """
 
-import json
 import os
 import sys
-from dataclasses import asdict, dataclass
 from typing import Callable, Optional
+
+from .i18n import t
+from .settings import AUTO, Settings
 
 #: 官方源
 OFFICIAL = "https://huggingface.co"
 #: 国内可用的只读镜像。路径与官方完全一致，换个域名就能下
 MIRROR = "https://hf-mirror.com"
-#: 下载源设置的特殊值：先试官方，连不上再用镜像
-AUTO = "auto"
-
 #: 探测用的小文件。识别模型都出自这个仓库家族，拿它当代表最贴近真实下载
 _PROBE_FILE = "/Systran/faster-whisper-tiny/resolve/main/config.json"
 #: 探测超时。连不通的网络通常卡在 TCP 握手，等满这几秒就足够判定
@@ -36,7 +34,7 @@ _REQUIRED_FILES = ("config.json", "model.bin", "tokenizer.json")
 _ENV_ENDPOINT = (os.environ.get("HF_ENDPOINT") or "").rstrip("/")
 
 #: 当前生效的设置，由 apply() 写入
-_settings: "Settings"
+_settings = Settings()
 #: 本进程已选定的下载源，避免每次取模型都重探一遍
 _chosen: Optional[str] = None
 #: 本进程设过的代理环境变量，用户改设置时要能撤掉
@@ -45,38 +43,6 @@ _proxy_vars: tuple = ()
 
 class DownloadError(RuntimeError):
     """模型下载失败。消息里带着可以照做的解决办法。"""
-
-
-@dataclass
-class Settings:
-    """模型下载相关的设置，图形界面与命令行共用一份。"""
-
-    source: str = AUTO  #: AUTO，或某个下载源地址
-    proxy: str = ""  #: 形如 http://127.0.0.1:7890，留空表示不用代理
-
-
-def config_path() -> str:
-    """设置文件路径。Windows 放 %APPDATA%，其它平台放 ~/.config。"""
-    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "subtitle-tool", "settings.json")
-
-
-def load() -> Settings:
-    """读设置。文件不存在或读坏了都退回默认值——设置坏了不该让程序起不来。"""
-    try:
-        with open(config_path(), encoding="utf-8") as handle:
-            data = json.load(handle)
-        return Settings(source=str(data.get("source") or AUTO), proxy=str(data.get("proxy") or ""))
-    except (OSError, ValueError, AttributeError):
-        return Settings()
-
-
-def save(settings: Settings) -> None:
-    """写设置。写不进去（目录只读等）会抛 OSError，由调用方决定怎么提示。"""
-    path = config_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(asdict(settings), handle, ensure_ascii=False, indent=2)
 
 
 def apply(settings: Settings) -> None:
@@ -136,7 +102,13 @@ def fetch(
         return path
     source = endpoint()
     if notify:
-        notify(f"正在从 {source} 下载{what}，首次使用需要等一会儿，之后一直复用本地缓存。")
+        notify(
+            t(
+                "正在从 {source} 下载{what}，首次使用需要等一会儿，之后一直复用本地缓存。",
+                source=source,
+                what=what,
+            )
+        )
     try:
         return download(False)
     except Exception as error:
@@ -249,21 +221,24 @@ def _reset_session() -> None:
 def _advice(what: str, source: str, cache_dir: Optional[str], error: Exception) -> str:
     # 已经在用镜像了就别再劝人换镜像
     switch = (
-        "把「模型下载源」改回「自动选源」（命令行加 --model-source auto）"
+        t("把「模型下载源」改回「自动选源」（命令行加 --model-source auto）")
         if source == MIRROR
-        else "把「模型下载源」改成「镜像 hf-mirror.com」（命令行加 --model-source mirror）"
+        else t("把「模型下载源」改成「镜像 hf-mirror.com」（命令行加 --model-source mirror）")
     )
     tips = (
         switch,
-        "有代理/VPN 就填上「代理」，例如 http://127.0.0.1:7890"
-        "（命令行加 --proxy http://127.0.0.1:7890）",
-        f"在能联网的机器上下好模型，把整个 {cache_dir or _default_cache()} 目录复制过来",
+        t("有代理/VPN 就填上「代理」，例如 http://127.0.0.1:7890（命令行加 --proxy 代理地址）"),
+        t(
+            "在能联网的机器上下好模型，把整个 {cache} 目录复制过来",
+            cache=cache_dir or _default_cache(),
+        ),
     )
-    steps = "；\n".join(f"  {i}. {tip}" for i, tip in enumerate(tips, 1))
-    return (
-        f"{what} 下载失败，通常是连不上下载源 {source}。可以试试：\n"
-        f"{steps}。\n"
-        f"原始错误：{type(error).__name__}: {error}"
+    return t(
+        "{what} 下载失败，通常是连不上下载源 {source}。可以试试：\n{steps}\n原始错误：{error}",
+        what=what,
+        source=source,
+        steps="\n".join(f"  {i}. {tip}" for i, tip in enumerate(tips, 1)),
+        error=f"{type(error).__name__}: {error}",
     )
 
 
@@ -274,6 +249,3 @@ def _default_cache() -> str:
         return constants.HF_HUB_CACHE
     except Exception:
         return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
-
-
-_settings = Settings()

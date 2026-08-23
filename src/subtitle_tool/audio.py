@@ -14,6 +14,7 @@ from typing import Callable, Optional
 import av
 import numpy as np
 
+from .i18n import t
 from .languages import describe_tag
 
 SAMPLE_RATE = 16000
@@ -35,7 +36,7 @@ class AudioTrack:
     @property
     def label(self) -> str:
         """下拉框里显示的一行描述。"""
-        parts = [f"音轨 {self.index + 1}"]
+        parts = [t("音轨 {number}", number=self.index + 1)]
         named = describe_tag(self.language_tag)
         if named:
             parts.append(named)
@@ -87,7 +88,14 @@ def decode_track(
     with av.open(path, mode="r", metadata_errors="ignore") as container:
         streams = container.streams.audio
         if track_index >= len(streams):
-            raise ValueError(f"{path} 只有 {len(streams)} 条音轨，无法选择第 {track_index + 1} 条")
+            raise ValueError(
+                t(
+                    "{path} 只有 {total} 条音轨，无法选择第 {wanted} 条",
+                    path=path,
+                    total=len(streams),
+                    wanted=track_index + 1,
+                )
+            )
         stream = streams[track_index]
         stream.thread_type = "AUTO"
         total = float(stream.duration * stream.time_base) if stream.duration else 0.0
@@ -108,7 +116,9 @@ def decode_track(
     if progress:
         progress(1.0)
     if dtype is None:
-        raise ValueError(f"{path} 第 {track_index + 1} 条音轨没有解出任何音频数据")
+        raise ValueError(
+            t("{path} 第 {number} 条音轨没有解出任何音频数据", path=path, number=track_index + 1)
+        )
     return np.frombuffer(raw.getbuffer(), dtype=dtype).astype(np.float32) / 32768.0
 
 
