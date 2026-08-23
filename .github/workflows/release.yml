@@ -1,4 +1,4 @@
-name: 发布 Windows 版
+name: make release
 
 # 仓库里只留这一个工作流：推 v* tag 会自动发布；手动触发则按最新的 v* tag 打包，
 # 两种情况都跑同一份代码——先在 Linux 上过检查，再在 Windows 上打包并发 Release。
