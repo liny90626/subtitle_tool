@@ -60,7 +60,7 @@ Measured on an 8-core CPU with int8 quantisation and no GPU:
 ## Using a GPU
 
 The portable build ships CPU inference only; bundling the CUDA runtime would grow it from
-500MB to 3GB. With an NVIDIA card, install the CUDA 12 runtime and the program picks it up:
+280MB to 3GB unpacked. With an NVIDIA card, install the CUDA 12 runtime and the program picks it up:
 
 ```powershell
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12

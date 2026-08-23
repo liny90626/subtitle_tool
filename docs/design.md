@@ -20,7 +20,7 @@
 | NVIDIA Canary / Parakeet | 英语等少数语种 WER 更低 | 语种覆盖远不如 Whisper，与「多国语言」的需求正相反；依赖 NeMo 生态 |
 
 选 faster-whisper 的决定性因素是**不引入 PyTorch**：这让 Windows 免安装包能控制在
-500MB 上下，而不是 3GB 起步。
+280MB 上下（v0.3.0 实测，解压后），而不是 3GB 起步。
 
 ### 2.2 音频解码与多音轨
 
