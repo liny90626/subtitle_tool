@@ -87,6 +87,11 @@ jobs:
           if (-not (Test-Path "dist/subtitle-tool/_internal/faster_whisper/assets/silero_vad_v6.onnx")) {
             throw "VAD 权重没打进去，运行时会找不到"
           }
+          if (-not (Test-Path "dist/subtitle-tool/_internal/shipped.txt")) {
+            throw "发布清单没写出来，覆盖安装时清理不掉旧文件"
+          }
+          "解压后体积：{0:N0} MB" -f ((Get-ChildItem dist/subtitle-tool -Recurse |
+            Measure-Object -Property Length -Sum).Sum / 1MB)
           # 带参数走命令行分支：能列出音轨就说明 PyAV / CTranslate2 等原生库都加载成功
           $p = Start-Process $exe -ArgumentList "--list-tracks","tests/data/jfk.flac" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "命令行冒烟测试失败，退出码 $($p.ExitCode)" }

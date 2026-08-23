@@ -20,7 +20,9 @@ binaries = (
 # 这些包没被直接 import，靠运行时动态加载
 hiddenimports = ["ctranslate2", "onnxruntime", "av"]
 
-# 明确排掉体积大又用不到的东西，装机包能小一半
+# 明确排掉体积大又用不到的东西。界面只用到 QtCore / QtGui / QtWidgets，
+# Qt 其余那几十个模块一个都不需要，排掉能省下几百 MB。
+# 排错了会在 CI 的冒烟测试里当场暴露——那一步真的把窗口拉起来。
 excludes = [
     "tkinter",
     "matplotlib",
@@ -30,18 +32,58 @@ excludes = [
     "pytest",
     "PIL",
     "torch",
-    "PySide6.Qt3DCore",
-    "PySide6.QtCharts",
-    "PySide6.QtDataVisualization",
-    "PySide6.QtMultimedia",
-    "PySide6.QtQuick",
-    "PySide6.QtQml",
-    "PySide6.QtWebEngineCore",
-    "PySide6.QtWebEngineWidgets",
-    "PySide6.QtOpenGL",
-    "PySide6.QtNetwork",
-    "PySide6.QtSql",
-    "PySide6.QtTest",
+] + [
+    f"PySide6.{module}"
+    for module in (
+        "Qt3DAnimation",
+        "Qt3DCore",
+        "Qt3DExtras",
+        "Qt3DInput",
+        "Qt3DLogic",
+        "Qt3DRender",
+        "QtBluetooth",
+        "QtCharts",
+        "QtDataVisualization",
+        "QtDBus",
+        "QtDesigner",
+        "QtGraphs",
+        "QtHelp",
+        "QtHttpServer",
+        "QtLocation",
+        "QtMultimedia",
+        "QtMultimediaWidgets",
+        "QtNetwork",
+        "QtNetworkAuth",
+        "QtNfc",
+        "QtOpenGL",
+        "QtOpenGLWidgets",
+        "QtPdf",
+        "QtPdfWidgets",
+        "QtPositioning",
+        "QtPrintSupport",
+        "QtQml",
+        "QtQuick",
+        "QtQuick3D",
+        "QtQuickControls2",
+        "QtQuickWidgets",
+        "QtRemoteObjects",
+        "QtScxml",
+        "QtSensors",
+        "QtSerialPort",
+        "QtSpatialAudio",
+        "QtSql",
+        "QtStateMachine",
+        "QtSvg",
+        "QtSvgWidgets",
+        "QtTest",
+        "QtTextToSpeech",
+        "QtUiTools",
+        "QtWebChannel",
+        "QtWebEngineCore",
+        "QtWebEngineWidgets",
+        "QtWebSockets",
+        "QtXml",
+    )
 ]
 
 a = Analysis(
@@ -76,3 +118,18 @@ coll = COLLECT(
     upx=False,
     name="subtitle-tool",
 )
+
+# 发布清单：免安装包是解压即用的，用户升级时习惯直接覆盖到原目录，旧版多出来的
+# DLL / .pyd 会留在那儿白占地方，甚至被 Python 抢先加载。程序启动时按这份清单把
+# 不属于本次发布的文件清掉（见 subtitle_tool/runtime.py）。
+import os
+
+internal = os.path.join(DISTPATH, coll.name, "_internal")
+shipped = sorted(
+    os.path.relpath(os.path.join(current, name), internal).replace(os.sep, "/")
+    for current, _, files in os.walk(internal)
+    for name in files
+)
+with open(os.path.join(internal, "shipped.txt"), "w", encoding="utf-8") as handle:
+    handle.write("\n".join([*shipped, "shipped.txt"]))
+print(f"发布清单：{len(shipped) + 1} 个文件")
