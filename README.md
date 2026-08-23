@@ -1,5 +1,7 @@
 # 字幕生成工具
 
+**中文** | [English](README.en.md)
+
 从任意视频的音轨生成字幕：自动识别语种、支持多音轨选择，并可翻译成你要的目标语言。
 全程本地运行，不上传任何内容。
 
@@ -8,6 +10,7 @@
 - 🌍 **多语种** — 自动识别 99 种语言；一条音轨里多语言混说也能逐段识别
 - 🈯 **任选目标语言** — 99 种目标语言，可输出译文 / 原文 / 双语对照
 - 📄 **SRT / VTT / TXT**，批量处理，可随时取消
+- 🌐 **中英双语界面** — 默认跟随系统语言，设置里随时切换
 - 🔌 **离线可用** — 首次下载模型后完全断网运行
 
 ## 快速开始
@@ -22,6 +25,9 @@
 模型托管在 huggingface.co，这个域名在国内多半连不通，程序会自动改用镜像
 `hf-mirror.com`；连不上也可以在「模型下载」里手动指定下载源或填代理，
 见[模型下载不动？](#模型下载不动)。
+
+界面语言默认跟随系统，也可以在「界面语言」里手动切成中文或 English，
+切换即时生效，不用重开程序。
 
 ![界面](docs/screenshot.png)
 
@@ -89,9 +95,12 @@ subtitle-tool *.mp4 --target ja --model small --output-dir ./subs
 # 连不上官方源时指定镜像，或走代理
 subtitle-tool video.mp4 --target zh --model-source mirror
 subtitle-tool video.mp4 --target zh --proxy http://127.0.0.1:7890
+
+# 命令行输出也分中英，--lang 跟着界面设置走，也可以临时指定
+subtitle-tool video.mp4 --target zh --lang en
 ```
 
-`--target` 接受 `zh` / `zho_Hans` / `中文（简体）` 三种写法，
+`--target` 接受 `zh` / `zho_Hans` / `中文（简体）` / `Chinese (Simplified)` 几种写法，
 `--list-languages` 可以看全部可选语言。
 
 免安装包里的 `SubtitleTool.exe` 带参数运行时就是命令行，不用另外装 Python：
