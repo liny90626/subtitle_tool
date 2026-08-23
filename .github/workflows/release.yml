@@ -92,6 +92,10 @@ jobs:
           }
           "解压后体积：{0:N0} MB" -f ((Get-ChildItem dist/subtitle-tool -Recurse |
             Measure-Object -Property Length -Sum).Sum / 1MB)
+          # 体积大头列出来，下次真要减体积时有据可依
+          Get-ChildItem dist/subtitle-tool/_internal -Recurse -File |
+            Sort-Object Length -Descending | Select-Object -First 15 |
+            ForEach-Object { "{0,8:N1} MB  {1}" -f ($_.Length / 1MB), $_.Name }
           # 带参数走命令行分支：能列出音轨就说明 PyAV / CTranslate2 等原生库都加载成功
           $p = Start-Process $exe -ArgumentList "--list-tracks","tests/data/jfk.flac" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "命令行冒烟测试失败，退出码 $($p.ExitCode)" }
