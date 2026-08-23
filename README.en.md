@@ -31,6 +31,11 @@ on its own, and you can also pick a source or set a proxy under "Model download"
 The interface follows your system language and can be switched to 中文 or English under
 "Interface language"; the change takes effect immediately, no restart needed.
 
+**Upgrading**: just unpack the new version over the old directory. On startup the program
+removes whatever the previous version left behind, using the file list shipped with the
+build. The model cache lives in your user folder, outside the program directory, so nothing
+has to be downloaded again.
+
 ![Interface](docs/screenshot.en.png)
 
 ## Which speech model
