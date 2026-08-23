@@ -1,5 +1,11 @@
 # 更新记录
 
+## v0.1.2
+
+程序本身与 v0.1.1 完全相同，只修了发布流程：仓库的 `GITHUB_TOKEN` 默认只读，
+创建 Release 需要在工作流里显式提权到 `contents: write`，否则最后一步会报
+`Resource not accessible by integration`。
+
 ## v0.1.1
 
 - 修复：模型加载失败（断网、磁盘不够）时图形界面会永久卡在「运行中」，
