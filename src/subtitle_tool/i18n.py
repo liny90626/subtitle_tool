@@ -110,6 +110,10 @@ _ENGLISH = {
     "全部文件": "All files",
     "模型加载失败": "Model loading failed",
     "首次使用需要联网下载模型。": "The models are downloaded from the internet on first use.",
+    "程序已经在运行了。": "The program is already running.",
+    "模型下载后会一直复用，之后可以断网使用": (
+        "Models are downloaded once and reused; after that it works offline"
+    ),
     "等待中": "Waiting",
     "完成": "Done",
     "失败": "Failed",

@@ -9,8 +9,8 @@ import sys
 import threading
 import traceback
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QSharedMemory, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import hub, i18n, runtime, settings
+from . import __version__, hub, i18n, runtime, settings
 from .asr import MODEL_SIZES, default_model, pick_device
 from .audio import probe_tracks
 from .errors import Cancelled, DownloadError
@@ -60,6 +60,85 @@ SOURCE_CHOICES = (
     ("官方 huggingface.co", hub.OFFICIAL),
     ("镜像 hf-mirror.com", hub.MIRROR),
 )
+
+
+#: 配色取自程序图标，蓝色做强调色，其余用中性灰
+ACCENT = "#3b6fd4"
+STATUS_COLORS = {"完成": "#1a7f37", "失败": "#cf222e", "未开始": "#6b7480", "等待中": "#6b7480"}
+
+#: 界面样式。Qt 自带的控件在 Windows 上偏"上世纪"，统一用 Fusion + 一层浅样式收拾一下：
+#: 分组做成卡片、控件圆角、留出呼吸空间，强调色只用在「开始生成」和进度条上。
+STYLE = f"""
+QWidget {{ background: #f4f5f7; color: #1f2328; font-size: 13px; }}
+QGroupBox {{
+    background: #ffffff; border: 1px solid #e1e4e8; border-radius: 10px;
+    margin-top: 14px; padding: 14px 14px 12px 14px; font-weight: 600;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin; left: 12px; padding: 0 6px;
+    color: #57606a; background: transparent;
+}}
+QLabel {{ background: transparent; color: #424a53; }}
+QLineEdit, QComboBox, QAbstractSpinBox {{
+    background: #ffffff; border: 1px solid #d6dae0; border-radius: 6px;
+    padding: 5px 8px; min-height: 20px; selection-background-color: {ACCENT};
+}}
+QLineEdit:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
+QLineEdit:disabled, QComboBox:disabled {{ background: #f0f1f3; color: #8c959f; }}
+QComboBox::drop-down {{ border: none; width: 20px; }}
+QComboBox QAbstractItemView {{
+    background: #ffffff; border: 1px solid #d6dae0; selection-background-color: {ACCENT};
+    selection-color: #ffffff; outline: none;
+}}
+QPushButton {{
+    background: #ffffff; border: 1px solid #d6dae0; border-radius: 6px;
+    padding: 6px 14px; color: #24292f;
+}}
+QPushButton:hover {{ background: #f6f8fa; border-color: #c4cad1; }}
+QPushButton:pressed {{ background: #eef0f3; }}
+QPushButton:disabled {{ color: #a8b0b8; background: #f4f5f7; }}
+QPushButton#primary {{
+    background: {ACCENT}; border: 1px solid {ACCENT}; color: #ffffff; font-weight: 600;
+}}
+QPushButton#primary:hover {{ background: #4d7ee0; border-color: #4d7ee0; }}
+QPushButton#primary:pressed {{ background: #2f5cb8; }}
+QPushButton#primary:disabled {{ background: #b9c7e6; border-color: #b9c7e6; color: #eef2fb; }}
+QTableWidget {{
+    background: #ffffff; border: 1px solid #e1e4e8; border-radius: 8px;
+    gridline-color: #eef0f3; selection-background-color: #e8f0fe; selection-color: #1f2328;
+    outline: none;  /* 当前单元格的虚线焦点框在 Fusion 下像个输入框 */
+}}
+QHeaderView::section {{
+    background: #f6f8fa; border: none; border-bottom: 1px solid #e1e4e8;
+    padding: 6px; color: #57606a; font-weight: 600;
+}}
+QTableWidget::item {{ padding: 4px 6px; }}
+QProgressBar {{
+    background: #eceef1; border: none; border-radius: 8px; height: 22px;
+    text-align: center; color: #424a53;
+}}
+QProgressBar::chunk {{ background: #9dbcf0; border-radius: 8px; }}
+QTextEdit {{
+    background: #fbfcfd; border: 1px solid #e1e4e8; border-radius: 8px;
+    color: #424a53; padding: 6px;
+}}
+QCheckBox {{ background: transparent; spacing: 7px; }}
+QCheckBox::indicator {{
+    width: 15px; height: 15px; border: 1px solid #c4cad1;
+    border-radius: 4px; background: #ffffff;
+}}
+QCheckBox::indicator:hover {{ border-color: {ACCENT}; }}
+QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QCheckBox::indicator:disabled {{ background: #eceef1; border-color: #dcdfe4; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: #c9ced6; border-radius: 5px; min-height: 24px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+"""
+
+
+def icon() -> QIcon:
+    """程序图标。打包后 PyInstaller 会把它放在包目录下的同一位置。"""
+    return QIcon(os.path.join(os.path.dirname(__file__), "assets", "icon.ico"))
 
 
 class Worker(QThread):
@@ -138,7 +217,7 @@ class Worker(QThread):
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.resize(940, 680)
+        self.resize(1020, 720)
         self.setAcceptDrops(True)
         self.worker = None
         self.engine = None
@@ -185,12 +264,29 @@ class MainWindow(QWidget):
     # ---------- 界面 ----------
 
     def _build(self):
-        self._text(self.setWindowTitle, "字幕生成工具")
+        self._live(lambda: self.setWindowTitle(f"{t('字幕生成工具')}  v{__version__}"))
+        self.setWindowIcon(icon())
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 10)
+        layout.setSpacing(12)
         layout.addWidget(self._build_files())
         layout.addWidget(self._build_settings())
         layout.addLayout(self._build_actions())
         layout.addWidget(self.log, 1)
+        layout.addLayout(self._build_footer())
+
+    def _build_footer(self):
+        version = QLabel(f"v{__version__}")
+        version.setStyleSheet("color: #8c959f; font-size: 11px;")
+        self.hint = QLabel()
+        self.hint.setStyleSheet("color: #8c959f; font-size: 11px;")
+        self._text(self.hint.setText, "模型下载后会一直复用，之后可以断网使用")
+        row = QHBoxLayout()
+        row.setContentsMargins(2, 0, 2, 0)
+        row.addWidget(self.hint)
+        row.addStretch(1)
+        row.addWidget(version)
+        return row
 
     def _build_files(self):
         box = QGroupBox()
@@ -198,12 +294,17 @@ class MainWindow(QWidget):
         self.table = QTableWidget(0, 3)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)  # 行号没用，白占一列
+        self.table.verticalHeader().setDefaultSectionSize(32)
+        self.table.setShowGrid(False)
+        self.table.setMinimumHeight(170)
         self._live(lambda: self.table.setHorizontalHeaderLabels([t("文件"), t("音轨"), t("状态")]))
         self._live(self._retranslate_statuses)
         self._live(self._retranslate_tracks)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setMinimumSectionSize(90)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
 
         remove = QAction(self.table)
@@ -237,6 +338,9 @@ class MainWindow(QWidget):
         box = QGroupBox()
         self._text(box.setTitle, "② 识别与翻译设置")
         form = QFormLayout(box)
+        form.setVerticalSpacing(9)
+        form.setHorizontalSpacing(12)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         saved = settings.load()
 
         self.model = QComboBox()
@@ -302,6 +406,7 @@ class MainWindow(QWidget):
 
         self.formats = {}
         format_row = QHBoxLayout()
+        format_row.setSpacing(18)
         for fmt in FORMATS:
             check = QCheckBox(fmt.upper())
             check.setChecked(fmt == "srt")
@@ -358,12 +463,15 @@ class MainWindow(QWidget):
 
     def _build_actions(self):
         self.start = QPushButton()
+        self.start.setObjectName("primary")  # 样式表里认这个名字
         self._text(self.start.setText, "开始生成")
         self.start.setMinimumHeight(36)
+        self.start.setMinimumWidth(120)
         self.start.clicked.connect(self._guarded(self._start))
         self.stop = QPushButton()
         self._text(self.stop.setText, "取消")
         self.stop.setMinimumHeight(36)
+        self.stop.setMinimumWidth(88)
         self.stop.setEnabled(False)
         self.stop.clicked.connect(self._guarded(self._stop))
         self.bar = QProgressBar()
@@ -449,6 +557,7 @@ class MainWindow(QWidget):
         item = self.table.item(row, 2)
         item.setData(Qt.UserRole, (source, fields))
         item.setText(t(source, **fields))
+        item.setForeground(QColor(STATUS_COLORS.get(source, ACCENT)))
 
     def _retranslate_tracks(self):
         for row in range(self.table.rowCount()):
@@ -461,7 +570,7 @@ class MainWindow(QWidget):
             stored = self.table.item(row, 2).data(Qt.UserRole)
             if stored:
                 source, fields = stored
-                self.table.item(row, 2).setText(t(source, **fields))
+                self._set_status(row, source, **fields)
 
     # ---------- 执行 ----------
 
@@ -622,18 +731,54 @@ class MainWindow(QWidget):
         event.accept()
 
 
+#: 单例用的共享内存键。同一个 key 在系统里只可能有一份
+_INSTANCE_KEY = "subtitle-tool-single-instance"
+
+
+def _claim_single_instance():
+    """占住单例的位置。已经有一个在跑就返回 None。
+
+    用 QSharedMemory 而不是 QLocalServer：后者在 QtNetwork 里，而打包时把整个
+    QtNetwork 排掉了。attach 成功先 detach 一次，清掉上次崩溃可能留下的残段
+    （Windows 上由系统回收，Unix 上不会）。
+    """
+    memory = QSharedMemory(_INSTANCE_KEY)
+    if memory.attach():
+        memory.detach()
+    if not memory.create(1):
+        return None
+    return memory
+
+
 def main():
     # 窗口模式下没有标准流，先换成不会炸的替身；异常也得有地方留痕
     runtime.silence_missing_streams()
     runtime.report_crashes()
     runtime.clean_leftovers()
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")  # 各版本 Windows 上长得一致，也是样式表的基准
+    app.setStyleSheet(STYLE)
+    app.setWindowIcon(icon())
+
+    instance = _claim_single_instance()
+    if instance is None:
+        runtime.trace("已经有一个实例在跑，本次直接退出")
+        notice = QMessageBox(QMessageBox.Information, t("字幕生成工具"), t("程序已经在运行了。"))
+        notice.setWindowIcon(icon())
+        QTimer.singleShot(4000, notice.close)  # 没人点也会自己关，别留个僵尸进程
+        notice.exec()
+        return 0
+
     window = MainWindow()
     window.show()
-    # 排在事件循环的第一件事：窗口已经画出来了，再去加载 CTranslate2 探显卡
-    # 探显卡要 import ctranslate2，装坏了会在这儿抛——不兜住的话 PySide6 直接结束进程
+    # 启动就把设置落一次盘：免安装包讲究「文件夹里看得见状态」，别等到第一次点开始
+    window._guarded(window._save_settings)()
+    # 排在事件循环的第一件事：窗口已经画出来了，再去加载 CTranslate2 探显卡——
+    # 装坏了会在这儿抛，不兜住的话 PySide6 直接结束进程
     QTimer.singleShot(0, window._guarded(window.detect_device))
-    return app.exec()
+    code = app.exec()
+    instance.detach()
+    return code
 
 
 if __name__ == "__main__":

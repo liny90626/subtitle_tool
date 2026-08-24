@@ -7,8 +7,11 @@
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
-# Silero VAD 的 onnx 权重随 faster-whisper 一起分发，不打进去运行时会找不到
-datas = collect_data_files("faster_whisper")
+# Silero VAD 的 onnx 权重随 faster-whisper 一起分发，不打进去运行时会找不到；
+# 图标既要给 exe 用，也要程序自己 setWindowIcon，所以还得作为数据文件带上
+datas = collect_data_files("faster_whisper") + [
+    ("src/subtitle_tool/assets/icon.ico", "subtitle_tool/assets"),
+]
 
 # 推理运行时的原生库，PyInstaller 的自动扫描抓不全
 binaries = (
@@ -135,6 +138,7 @@ exe = EXE(
     strip=False,
     upx=False,  # UPX 压缩过的原生库在部分杀毒软件下会被拦
     console=False,  # GUI 程序，不弹黑框
+    icon="src/subtitle_tool/assets/icon.ico",
 )
 
 coll = COLLECT(
