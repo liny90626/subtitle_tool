@@ -92,6 +92,9 @@ jobs:
             throw "VAD 权重没进压缩包，运行时会找不到"
           }
           if (-not (Test-Path "smoke/_internal/shipped.txt")) { throw "发布清单没进压缩包" }
+          if (-not (Test-Path "smoke/_internal/subtitle_tool/assets/icon.ico")) {
+            throw "图标没进压缩包，窗口和任务栏就没图标了"
+          }
 
           # 压缩/解压有没有漏文件——漏了的话程序会在用到那个 DLL 的时候突然消失
           $shipped = @(Get-Content "smoke/_internal/shipped.txt").Count
@@ -117,15 +120,33 @@ jobs:
             throw "清理把该留的文件删掉了"
           }
 
+          # 日志和设置要落在 exe 同级目录，不是 %APPDATA%
+          if (-not (Test-Path "smoke/subtitle-tool.log")) { throw "日志没写在 exe 同级目录" }
+          if (Test-Path (Join-Path $env:APPDATA "subtitle-tool\subtitle-tool.log")) {
+            throw "日志还写到 %APPDATA% 去了"
+          }
+          "--- 运行流水账 ---"; Get-Content "smoke/subtitle-tool.log"
+
           # 图形界面能起来且不会秒退
           $g = Start-Process $exe -PassThru
           Start-Sleep -Seconds 25
           if ($g.HasExited) { throw "图形界面启动后立即退出，退出码 $($g.ExitCode)" }
-          Stop-Process -Id $g.Id -Force
 
-          # 崩溃日志里有东西就说明上面某一步悄悄出事了
-          $log = Join-Path $env:APPDATA "subtitle-tool\subtitle-tool.log"
-          if (Test-Path $log) { Get-Content $log; throw "跑出崩溃日志了" }
+          # 单例：再开一个应当自己退掉（提示框 4 秒后自动关）
+          $second = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 12
+          if (-not $second.HasExited) {
+            Stop-Process -Id $second.Id -Force
+            Stop-Process -Id $g.Id -Force
+            throw "第二个实例没退出，单例没生效"
+          }
+          Stop-Process -Id $g.Id -Force
+          if (-not (Test-Path "smoke/settings.json")) { throw "设置没写在 exe 同级目录" }
+
+          # 日志里出现 Traceback 就说明上面某一步悄悄出事了
+          if (Select-String -Path "smoke/subtitle-tool.log" -Pattern "Traceback" -Quiet) {
+            Get-Content "smoke/subtitle-tool.log"; throw "日志里有异常堆栈"
+          }
 
           "解压后体积：{0:N0} MB" -f ((Get-ChildItem smoke -Recurse |
             Measure-Object -Property Length -Sum).Sum / 1MB)
