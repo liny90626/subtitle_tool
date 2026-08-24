@@ -89,6 +89,54 @@ def memory_note() -> str:
         return ""
 
 
+#: 各识别模型加载后大致占多少内存（GB，int8 量化，实测量级）
+_MODEL_MEMORY = {
+    "tiny": 0.2,
+    "base": 0.3,
+    "small": 0.8,
+    "medium": 1.8,
+    "distil-large-v3": 1.8,
+    "large-v3-turbo": 2.0,
+    "large-v3": 3.5,
+}
+#: 转写一个窗口本身要的常数开销（GB，实测 tiny 约 0.65，大模型更多）
+_WINDOW_MEMORY = 1.0
+
+
+def available_memory() -> float:
+    """当前可用物理内存（GB）。取不到返回 0。"""
+    note = memory_note()
+    try:
+        return float(note.split()[1].split("/")[0])
+    except (IndexError, ValueError):
+        return 0.0
+
+
+def warn_if_memory_is_tight(model: str, seconds: float, notify=None) -> bool:
+    """内存眼看不够时提前说一声，别让用户对着一次静默退出发呆。
+
+    转写一个窗口是整个流程的内存高峰，而 C++ 里分配失败是直接 abort——真撞上了连
+    异常都没有。所以宁可事先估一估：模型本身 + 一个窗口的开销 + 还留着的音轨。
+    """
+    free = available_memory()
+    if not free:
+        return False
+    needed = _MODEL_MEMORY.get(model, 1.0) + _WINDOW_MEMORY + seconds * 16000 * 2 / 1073741824
+    if free >= needed:
+        return False
+    from .i18n import t
+
+    message = t(
+        "⚠ 可用内存只剩 {free:.1f}GB，这段视频大约要 {needed:.1f}GB，建议换更小的识别模型",
+        free=free,
+        needed=needed,
+    )
+    trace(message)
+    if notify:
+        notify(message, None)
+    return True
+
+
 def report_crashes() -> None:
     """未捕获的异常记进日志，别让进程一声不吭地消失。
 

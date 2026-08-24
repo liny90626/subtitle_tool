@@ -6,7 +6,6 @@
 """
 
 import gc
-import io
 import itertools
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -77,13 +76,17 @@ def decode_track(
     track_index: int = 0,
     progress: Optional[Callable[[float], None]] = None,
 ) -> np.ndarray:
-    """把指定音轨解码为 16kHz 单声道 float32 波形。
+    """把指定音轨解码为 16kHz 单声道 **int16** 波形。
 
-    ``progress`` 收到 0.0~1.0 的解码进度。返回的数组即 Whisper 的输入格式。
+    ``progress`` 收到 0.0~1.0 的解码进度。
+
+    返回 int16 而不是模型直接要的 float32，而且往预先开好的数组里填：老写法先往
+    BytesIO 里攒 int16、再 ``astype`` 出一份 float32，两份同时在内存里，加上 BytesIO
+    扩容时的新旧两块，157 分钟的片子峰值要 1.26GB。改成这样峰值只剩 0.28GB——一台
+    15.6GB 的机器解码完只剩 0.4GB 可用时，这 1GB 就是能不能跑下去的差别。
+    模型要的 float32 在窗口边界上按需转（见 :mod:`subtitle_tool.asr`），一次只有几十 MB。
     """
     resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
-    raw = io.BytesIO()
-    dtype = None
 
     with av.open(path, mode="r", metadata_errors="ignore") as container:
         streams = container.streams.audio
@@ -103,10 +106,16 @@ def decode_track(
         frames = _skip_invalid(container.decode(stream))
         frames = _report(frames, total, progress)
         frames = _group(frames, 500000)
+        # 按时长预开一整块，正常情况下一次到位，不会有「旧块+新块」并存的扩容尖峰
+        capacity = int(total * SAMPLE_RATE) + SAMPLE_RATE if total else SAMPLE_RATE * 600
+        buffer = np.empty(capacity, dtype=np.int16)
+        filled = 0
         for frame in _resample(frames, resampler):
-            array = frame.to_ndarray()
-            dtype = array.dtype
-            raw.write(array)
+            chunk = frame.to_ndarray().reshape(-1)
+            if filled + chunk.size > buffer.size:
+                buffer = _grow(buffer, filled, filled + chunk.size)
+            buffer[filled : filled + chunk.size] = chunk
+            filled += chunk.size
 
     # 重采样器持有的缓冲不手动 GC 不会释放，长视频批处理时会累积
     # 见 https://github.com/SYSTRAN/faster-whisper/issues/390
@@ -115,14 +124,21 @@ def decode_track(
 
     if progress:
         progress(1.0)
-    if dtype is None:
+    if filled == 0:
         raise ValueError(
             t("{path} 第 {number} 条音轨没有解出任何音频数据", path=path, number=track_index + 1)
         )
-    # 转完就地归一化：一小时音轨是 230MB，能少一次全量拷贝就少一次
-    audio = np.frombuffer(raw.getbuffer(), dtype=dtype).astype(np.float32)
-    audio /= 32768.0
-    return audio
+    # 时长估太松时把尾巴收掉，别让一整块内存被一个小切片吊着
+    if buffer.size - filled > buffer.size // 10:
+        return buffer[:filled].copy()
+    return buffer[:filled]
+
+
+def _grow(buffer, filled, needed):
+    """时长估少了才会走到这儿：换一块更大的，多留四分之一免得反复搬。"""
+    bigger = np.empty(max(needed, buffer.size * 5 // 4), dtype=buffer.dtype)
+    bigger[:filled] = buffer[:filled]
+    return bigger
 
 
 def _skip_invalid(frames):

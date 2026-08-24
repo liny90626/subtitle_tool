@@ -9,6 +9,8 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+import numpy as np
+
 from . import hub, runtime
 from .audio import SAMPLE_RATE
 from .errors import Cancelled
@@ -157,13 +159,16 @@ class Transcriber:
         self.model_size = model_size
 
     def detect_language(self, audio, segments: int = 8) -> tuple[str, float]:
-        """在整条音轨上采样若干片段判定主语种，返回 ``(whisper 码, 置信度)``。
+        """沿整条音轨采样若干片段判定主语种，返回 ``(whisper 码, 置信度)``。
 
-        只看开头 30 秒容易被片头音乐、外语问候语带偏，因此取多段投票；
-        ``vad_filter`` 先剔除静音，避免拿空白片段去猜语种。
+        只看开头 30 秒容易被片头音乐、外语问候语带偏，因此沿整轨等距取 ``segments``
+        段各 30 秒拼起来交给模型投票；``vad_filter`` 先剔除静音，避免拿空白片段去猜。
+
+        自己取样还有个好处：不用把整条音轨转成 float32。两个多小时的片子那是半个 GB，
+        而判定语种真正要看的只有这几分钟。
         """
         language, probability, _ = self.model.detect_language(
-            audio=audio,
+            audio=_sample(audio, segments),
             vad_filter=True,
             language_detection_segments=segments,
         )
@@ -214,7 +219,7 @@ class Transcriber:
     ) -> list[Segment]:
         """转写一个窗口，时间戳按 ``offset`` 平移回整轨的坐标系。"""
         raw_segments, info = self.batched.transcribe(
-            audio,
+            _to_float(audio),
             language=language,
             multilingual=multilingual,
             batch_size=batch_size,
@@ -257,9 +262,13 @@ class Transcriber:
         for start, stop in _group_by_window(segments, window):
             if cancel is not None and cancel.is_set():
                 raise Cancelled()
-            clip = audio[
-                int(segments[start].start * SAMPLE_RATE) : int(segments[stop - 1].end * SAMPLE_RATE)
-            ]
+            clip = _to_float(
+                audio[
+                    int(segments[start].start * SAMPLE_RATE) : int(
+                        segments[stop - 1].end * SAMPLE_RATE
+                    )
+                ]
+            )
             # 组内已确定是语音，无需再过 VAD
             language, _, _ = self.model.detect_language(audio=clip, vad_filter=False)
             for seg in segments[start:stop]:
@@ -267,6 +276,28 @@ class Transcriber:
             if progress:
                 progress(min(stop / len(segments), 1.0))
         return segments
+
+
+def _to_float(samples) -> np.ndarray:
+    """int16 波形转成模型要的 [-1, 1] float32。
+
+    只在真要送进模型的那一小段上做——整轨存 int16、用到哪段转哪段，是长视频能不能
+    跑下去的关键（见 :func:`subtitle_tool.audio.decode_track`）。
+    """
+    if samples.dtype == np.float32:
+        return samples
+    return samples.astype(np.float32) / 32768.0
+
+
+def _sample(audio, count: int, seconds: float = 30.0) -> np.ndarray:
+    """沿音轨等距取 ``count`` 段各 ``seconds`` 秒，拼成一条给语种判定用。"""
+    span = int(seconds * SAMPLE_RATE)
+    if len(audio) <= span * count:
+        return _to_float(audio)
+    step = (len(audio) - span) / max(count - 1, 1)
+    return _to_float(
+        np.concatenate([audio[int(i * step) : int(i * step) + span] for i in range(count)])
+    )
 
 
 def _group_by_window(segments: list[Segment], window: float):

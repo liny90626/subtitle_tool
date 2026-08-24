@@ -106,7 +106,10 @@ class Engine:
             )
         track = tracks[options.track_index]
         reporter = _Reporter(_plan(options), progress)
-        runtime.trace(f"开始处理 {name}（音轨 {options.track_index + 1}/{len(tracks)}）")
+        runtime.trace(
+            f"开始处理 {name}（音轨 {options.track_index + 1}/{len(tracks)}，"
+            f"{track.duration / 60:.1f} 分钟）{runtime.memory_note()}"
+        )
 
         audio = decode_track(path, options.track_index, reporter.stage("解码音轨"))
         runtime.trace(f"解码完成 {len(audio) / 16000 / 60:.1f} 分钟 {runtime.memory_note()}")
@@ -117,6 +120,7 @@ class Engine:
             reporter.done("识别语种")
 
         runtime.trace(f"转写开始，语种 {source}")
+        runtime.warn_if_memory_is_tight(self.model_size, len(audio) / 16000, self.notify)
         segments = self.transcriber.transcribe(
             audio,
             # 多语种模式交给模型逐窗口重判，不锁定语种

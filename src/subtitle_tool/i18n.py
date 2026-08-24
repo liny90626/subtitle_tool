@@ -135,6 +135,10 @@ _ENGLISH = {
     "✗ 模型加载失败：{error}": "✗ Could not load the model: {error}",
     "⚠ 无法读取 {name}：{error}": "⚠ Could not read {name}: {error}",
     "⚠ {name} 没有音轨，已跳过": "⚠ {name} has no audio track, skipped",
+    "⚠ 可用内存只剩 {free:.1f}GB，这段视频大约要 {needed:.1f}GB，建议换更小的识别模型": (
+        "⚠ Only {free:.1f}GB of memory is free, this video needs about {needed:.1f}GB; "
+        "pick a smaller speech model"
+    ),
     "⚠ 设置没能存下来（{error}），本次运行仍然生效": (
         "⚠ Could not save the settings ({error}); they still apply to this run"
     ),
