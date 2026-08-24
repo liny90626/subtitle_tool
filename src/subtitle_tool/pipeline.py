@@ -89,7 +89,25 @@ class Engine:
         progress: Optional[Callable[[str, float], None]] = None,
         cancel=None,
     ) -> Result:
-        """跑完整条流水线并写出字幕文件。"""
+        """跑完整条流水线并写出字幕文件。
+
+        内存不够时抛 :class:`MemoryError`，消息是给用户看的中文——上层照常当一条普通
+        错误显示，不该让它演变成一次静默退出。
+        """
+        try:
+            return self._run(path, options, progress, cancel)
+        except MemoryError as error:
+            message = str(error) or runtime.out_of_memory_message()
+            runtime.trace(f"内存不足：{message}")
+            raise MemoryError(message) from None
+
+    def _run(
+        self,
+        path: str,
+        options: Options,
+        progress: Optional[Callable[[str, float], None]] = None,
+        cancel=None,
+    ) -> Result:
         self._cancel = cancel
         name = os.path.basename(path)
         tracks = probe_tracks(path)
@@ -119,15 +137,25 @@ class Engine:
             source, _ = self.transcriber.detect_language(audio)
             reporter.done("识别语种")
 
-        runtime.trace(f"转写开始，语种 {source}")
-        runtime.warn_if_memory_is_tight(self.model_size, len(audio) / 16000, self.notify)
+        window, batch, note = runtime.plan_transcription(self.model_size, len(audio) / 16000)
+        if note:
+            runtime.trace(note)
+            if self.notify:
+                self.notify(note, None)
+        if window is None:
+            # 连最省的档位都摆不下。与其冲进去让原生层把整个进程干掉，不如好好说一句
+            raise MemoryError(note)
+
+        runtime.trace(f"转写开始，语种 {source}，窗口 {window:.0f}s 批 {batch}")
         segments = self.transcriber.transcribe(
             audio,
             # 多语种模式交给模型逐窗口重判，不锁定语种
             language=None if options.multi_language else source,
             multilingual=options.multi_language,
+            batch_size=batch,
             progress=reporter.stage("语音转写"),
             cancel=cancel,
+            window_seconds=window,
         )
         if not segments:
             # 只有音乐/环境音的音轨会走到这里。写个空字幕文件出去等于让用户白等，直接报错。

@@ -182,6 +182,7 @@ class Transcriber:
         batch_size: int = 8,
         progress: Optional[Callable[[float], None]] = None,
         cancel: Optional[threading.Event] = None,
+        window_seconds: float = WINDOW_SECONDS,
     ) -> list[Segment]:
         """转写音频。
 
@@ -191,7 +192,7 @@ class Transcriber:
         长音轨按 :data:`WINDOW_SECONDS` 切窗口逐段处理——不这么做的话内存会跟着片长
         一起涨，长片直接把进程撑爆。
         """
-        window = int(WINDOW_SECONDS * SAMPLE_RATE)
+        window = int(window_seconds * SAMPLE_RATE)
         total = max(1, -(-len(audio) // window))  # 向上取整
         results: list[Segment] = []
         for index, start in enumerate(range(0, max(len(audio), 1), window), 1):

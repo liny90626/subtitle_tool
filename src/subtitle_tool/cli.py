@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from . import hub, i18n, settings
+from . import hub, i18n, runtime, settings
 from .asr import MODEL_SIZES, default_model
 from .audio import probe_tracks
 from .errors import Cancelled, DownloadError
@@ -151,7 +151,7 @@ def main(argv=None) -> int:
             # 模型下不下来跟具体文件无关，后面的文件只会一模一样地再失败一遍
             _overwrite(f"  ✗ {error}")
             return 1
-        except (ValueError, OSError) as error:
+        except (ValueError, OSError, MemoryError) as error:
             # 批处理里一个文件坏掉不该中断其余文件，但退出码要如实反映失败
             _overwrite(f"  ✗ {error}")
             failed += 1
@@ -159,6 +159,7 @@ def main(argv=None) -> int:
         _overwrite("  " + _summary(result, args.multi_language, target))
         for out in result.outputs:
             print(f"  ✓ {out}")
+    runtime.finished()
     return 1 if failed else 0
 
 

@@ -135,9 +135,21 @@ _ENGLISH = {
     "✗ 模型加载失败：{error}": "✗ Could not load the model: {error}",
     "⚠ 无法读取 {name}：{error}": "⚠ Could not read {name}: {error}",
     "⚠ {name} 没有音轨，已跳过": "⚠ {name} has no audio track, skipped",
-    "⚠ 可用内存只剩 {free:.1f}GB，这段视频大约要 {needed:.1f}GB，建议换更小的识别模型": (
-        "⚠ Only {free:.1f}GB of memory is free, this video needs about {needed:.1f}GB; "
-        "pick a smaller speech model"
+    "⚠ 上次运行没有正常结束，停在：{step}": "⚠ The last run did not finish. It stopped at: {step}",
+    "如果是闪退，多半是内存不够，换更小的识别模型再试": (
+        "If it vanished, it most likely ran out of memory — try a smaller speech model"
+    ),
+    "内存偏紧（可用 {free:.1f}GB），已自动把处理粒度调小，会慢一些但能跑完": (
+        "Memory is tight ({free:.1f}GB free), so the work was split into smaller pieces; "
+        "slower, but it will finish"
+    ),
+    "内存不够：可用 {free:.1f}GB，至少要 {need:.1f}GB。请关掉些程序或换更小的识别模型": (
+        "Not enough memory: {free:.1f}GB free, at least {need:.1f}GB needed. Close some "
+        "programs, or pick a smaller speech model"
+    ),
+    "内存不足，没能跑完这个文件。换更小的识别模型，或关掉些占内存的程序再试": (
+        "Ran out of memory on this file. Pick a smaller speech model, or close some "
+        "memory-hungry programs and try again"
     ),
     "⚠ 设置没能存下来（{error}），本次运行仍然生效": (
         "⚠ Could not save the settings ({error}); they still apply to this run"

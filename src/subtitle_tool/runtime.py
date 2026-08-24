@@ -5,6 +5,7 @@
 """
 
 import inspect
+import math
 import os
 import sys
 import threading
@@ -20,6 +21,8 @@ _MANIFEST = "shipped.txt"
 _MAX_LEFTOVER_RATIO = 0.5
 #: 日志留最近这么多字节，超了就重开一个
 _LOG_LIMIT = 1_000_000
+#: 整轨按 int16 常驻，每秒 16000 个样本、每个 2 字节
+SAMPLE_BYTES = 16000 * 2
 
 
 def log_path() -> str:
@@ -52,6 +55,27 @@ def trace(step: str) -> None:
     事后唯一能拿到的线索就是这份流水账的最后一行。所以宁可多写几行。
     """
     log(f"[{time.strftime('%H:%M:%S')}] {step}\n")
+
+
+#: 正常收尾时写的最后一行，用来判断上次是不是被中途干掉的
+_FINISHED = "程序退出"
+
+
+def finished() -> None:
+    """正常结束时记一笔，下次启动据此判断上次有没有出事。"""
+    trace(_FINISHED)
+
+
+def last_unfinished():
+    """上次运行没收尾的话，返回它停在哪一步；正常结束返回 None。"""
+    try:
+        with open(log_path(), encoding="utf-8", errors="replace") as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+    except OSError:
+        return None
+    if not lines or _FINISHED in lines[-1]:
+        return None
+    return lines[-1]
 
 
 def memory_note() -> str:
@@ -89,7 +113,7 @@ def memory_note() -> str:
         return ""
 
 
-#: 各识别模型加载后大致占多少内存（GB，int8 量化，实测量级）
+#: 各识别模型加载后大致占多少内存（GB，int8 量化）
 _MODEL_MEMORY = {
     "tiny": 0.2,
     "base": 0.3,
@@ -99,8 +123,20 @@ _MODEL_MEMORY = {
     "large-v3-turbo": 2.0,
     "large-v3": 3.5,
 }
-#: 转写一个窗口本身要的常数开销（GB，实测 tiny 约 0.65，大模型更多）
-_WINDOW_MEMORY = 1.0
+
+#: 转写档位，从阔绰到拮据：(窗口秒数, 批大小, 该档位的工作内存基准 GB)。
+#:
+#: 基准值来自实测：tiny + 10 分钟窗口 + 批 8，转写开头的峰值比模型本身多约 0.67GB。
+#: 大模型的中间张量更大，按模型自身占用缩放（见 _work）。窗口和批都调小之后内存跟着降，
+#: 代价只是慢一点——比直接崩掉强得多。
+_PROFILES = (
+    (600.0, 8, 0.90),
+    (300.0, 4, 0.55),
+    (150.0, 2, 0.35),
+    (60.0, 1, 0.22),
+)
+#: 留一成余量给系统和其它程序，别掐着线跑
+_HEADROOM = 0.9
 
 
 def available_memory() -> float:
@@ -112,29 +148,61 @@ def available_memory() -> float:
         return 0.0
 
 
-def warn_if_memory_is_tight(model: str, seconds: float, notify=None) -> bool:
-    """内存眼看不够时提前说一声，别让用户对着一次静默退出发呆。
+def _work(base: float, model: str) -> float:
+    """某个档位在某个模型下的工作内存估计。"""
+    return base * (0.6 + _MODEL_MEMORY.get(model, 1.0))
 
-    转写一个窗口是整个流程的内存高峰，而 C++ 里分配失败是直接 abort——真撞上了连
-    异常都没有。所以宁可事先估一估：模型本身 + 一个窗口的开销 + 还留着的音轨。
+
+def plan_transcription(model: str, seconds: float) -> tuple:
+    """按当前可用内存挑一个跑得动的转写档位。
+
+    返回 ``(窗口秒数, 批大小, 提示)``：提示为 None 表示宽裕；否则是一句给用户看的话。
+    实在连最省的档位都摆不下时，窗口/批返回 None——调用方据此友好地拒绝，
+    而不是冲进去让原生层把进程干掉。
+
+    读不到内存信息（非 Windows/Linux）时按最阔绰的档位走，行为和以前一致。
     """
     free = available_memory()
     if not free:
-        return False
-    needed = _MODEL_MEMORY.get(model, 1.0) + _WINDOW_MEMORY + seconds * 16000 * 2 / 1073741824
-    if free >= needed:
-        return False
+        return _PROFILES[0][0], _PROFILES[0][1], None
+
+    fixed = _MODEL_MEMORY.get(model, 1.0) + seconds * SAMPLE_BYTES / 1073741824
+    for index, (window, batch, base) in enumerate(_PROFILES):
+        if fixed + _work(base, model) <= free * _HEADROOM:
+            if index == 0:
+                return window, batch, None
+            from .i18n import t
+
+            return (
+                window,
+                batch,
+                t(
+                    "内存偏紧（可用 {free:.1f}GB），已自动把处理粒度调小，会慢一些但能跑完",
+                    free=free,
+                ),
+            )
+
     from .i18n import t
 
-    message = t(
-        "⚠ 可用内存只剩 {free:.1f}GB，这段视频大约要 {needed:.1f}GB，建议换更小的识别模型",
-        free=free,
-        needed=needed,
+    # 两个数都保留一位小数时很容易看着一样大（0.4 与 0.4），可用的往下取、
+    # 需要的往上取，读起来才是「不够」
+    least = (fixed + _work(_PROFILES[-1][2], model)) / _HEADROOM
+    return (
+        None,
+        None,
+        t(
+            "内存不够：可用 {free:.1f}GB，至少要 {need:.1f}GB。请关掉些程序或换更小的识别模型",
+            free=math.floor(free * 10) / 10,
+            need=math.ceil(least * 10) / 10,
+        ),
     )
-    trace(message)
-    if notify:
-        notify(message, None)
-    return True
+
+
+def out_of_memory_message() -> str:
+    """真的分配失败时给用户看的话。"""
+    from .i18n import t
+
+    return t("内存不足，没能跑完这个文件。换更小的识别模型，或关掉些占内存的程序再试")
 
 
 def report_crashes() -> None:

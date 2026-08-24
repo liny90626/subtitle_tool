@@ -78,14 +78,56 @@ def test_growing_the_buffer_keeps_what_was_already_decoded():
     assert list(bigger[:4]) == [0, 1, 2, 3]
 
 
-def test_memory_warning_fires_when_it_would_not_fit(monkeypatch):
-    """内存眼看不够时要提前说，别让用户对着一次静默退出发呆。"""
+def test_plenty_of_memory_keeps_the_fastest_profile(monkeypatch):
+    from subtitle_tool import runtime
+
+    monkeypatch.setattr(runtime, "available_memory", lambda: 12.0)
+    window, batch, note = runtime.plan_transcription("small", 157 * 60)
+    assert (window, batch, note) == (600.0, 8, None)
+
+
+def test_tight_memory_shrinks_the_work_instead_of_dying(monkeypatch):
+    """内存紧的时候把粒度调小、慢一点跑完，比让原生层把进程干掉强。"""
+    from subtitle_tool import runtime
+
+    monkeypatch.setattr(runtime, "available_memory", lambda: 2.0)
+    window, batch, note = runtime.plan_transcription("small", 157 * 60)
+    assert window < 600.0 and batch < 8
+    assert note and "2.0GB" in note
+
+
+def test_hopeless_memory_refuses_up_front(monkeypatch):
+    """连最省的档位都摆不下时，好好说一句，别冲进去让进程静默消失。"""
     from subtitle_tool import runtime
 
     monkeypatch.setattr(runtime, "available_memory", lambda: 0.4)
-    seen = []
-    assert runtime.warn_if_memory_is_tight("small", 157 * 60, lambda m, f: seen.append(m))
-    assert "0.4GB" in seen[0]
+    window, batch, note = runtime.plan_transcription("small", 157 * 60)
+    assert window is None and batch is None
+    assert "0.4GB" in note
 
-    monkeypatch.setattr(runtime, "available_memory", lambda: 12.0)
-    assert not runtime.warn_if_memory_is_tight("small", 157 * 60, None)
+
+def test_unknown_memory_behaves_like_before(monkeypatch):
+    from subtitle_tool import runtime
+
+    monkeypatch.setattr(runtime, "available_memory", lambda: 0.0)
+    assert runtime.plan_transcription("small", 60)[:2] == (600.0, 8)
+
+
+def test_the_refusal_never_reads_as_two_equal_numbers(monkeypatch):
+    """0.4GB 可用 / 至少要 0.4GB 这种话等于没说，需要的那个得往上取整。"""
+    from subtitle_tool import runtime
+
+    for free in (0.4, 0.75, 1.2, 2.9):
+        monkeypatch.setattr(runtime, "available_memory", lambda free=free: free)
+        window, _, note = runtime.plan_transcription("large-v3", 157 * 60)
+        assert window is None
+        numbers = [float(piece) for piece in note.replace("GB", " ").split() if _is_number(piece)]
+        assert numbers[1] > numbers[0], note
+
+
+def _is_number(text):
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True

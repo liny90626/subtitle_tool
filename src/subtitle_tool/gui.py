@@ -769,14 +769,21 @@ def main():
         notice.exec()
         return 0
 
+    unfinished = runtime.last_unfinished()  # 得在写新日志之前读
+    runtime.trace(f"程序启动 v{__version__} {runtime.memory_note()}")
+
     window = MainWindow()
     window.show()
+    if unfinished:
+        window._log(t("⚠ 上次运行没有正常结束，停在：{step}", step=unfinished))
+        window._log(t("如果是闪退，多半是内存不够，换更小的识别模型再试"))
     # 启动就把设置落一次盘：免安装包讲究「文件夹里看得见状态」，别等到第一次点开始
     window._guarded(window._save_settings)()
     # 排在事件循环的第一件事：窗口已经画出来了，再去加载 CTranslate2 探显卡——
     # 装坏了会在这儿抛，不兜住的话 PySide6 直接结束进程
     QTimer.singleShot(0, window._guarded(window.detect_device))
     code = app.exec()
+    runtime.finished()
     instance.detach()
     return code
 
