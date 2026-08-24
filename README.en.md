@@ -167,7 +167,9 @@ are written up in [docs/design.md](docs/design.md) (Chinese).
 - Translation quality is what NLLB-600M gives you; long sentences and jargon are mediocre.
   For the best quality, export the source subtitles and translate them elsewhere
 - No speaker diarisation
-- The whole track is decoded into memory as int16, roughly 115MB per hour
+- The whole track is decoded into memory as int16, roughly 115MB per hour; when memory is
+  tight the work is split into smaller pieces (slower but it finishes), and if it truly will
+  not fit you get a clear message instead of a crash
 - Per-segment language detection works in 30-second groups, so a language change inside one
   group follows the majority of that group
 
