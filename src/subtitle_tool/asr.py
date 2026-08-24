@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from . import hub
+from . import hub, runtime
 from .audio import SAMPLE_RATE
 from .errors import Cancelled
 from .i18n import t
@@ -34,6 +34,17 @@ WHISPER_FILES = [
     "tokenizer.json",
     "vocabulary.*",
 ]
+
+#: 一次交给模型的音频上限。
+#:
+#: 整条音轨一次性喂进去时，VAD 切块、逐块算梅尔特征、np.stack 成一个大数组、再加第一批
+#: 编码，全都同时压在内存里，而且随片长线性增长：实测（tiny，光这一步、还没出第一条字幕）
+#: 15 分钟要 0.8GB，1 小时 1.0GB，2 小时 1.7GB——再加上 small/turbo 模型本身的几百 MB 到
+#: 2GB，8GB 的机器上直接把进程撑爆，而 C++ 里分配失败是 abort，连 Python 异常都没有，
+#: 表现就是「识别语种刚跑完就闪退，什么日志都不留」。
+#: 按窗口切开之后内存变成常数。代价是窗口边界可能把一句话切成两条，10 分钟一切、
+#: 两小时的片子也只有 11 个边界；短于一个窗口的音轨走的还是原来那条路，结果完全不变。
+WINDOW_SECONDS = 600.0
 
 #: 单条字幕的时长上限，取通行的 7 秒
 MAX_CUE_SECONDS = 7.0
@@ -171,7 +182,37 @@ class Transcriber:
 
         ``language`` 为 None 时由模型自行判定；``multilingual=True`` 时逐段重新判定
         语种，用于一条音轨内多语言混说的场景。
+
+        长音轨按 :data:`WINDOW_SECONDS` 切窗口逐段处理——不这么做的话内存会跟着片长
+        一起涨，长片直接把进程撑爆。
         """
+        window = int(WINDOW_SECONDS * SAMPLE_RATE)
+        total = max(1, -(-len(audio) // window))  # 向上取整
+        results: list[Segment] = []
+        for index, start in enumerate(range(0, max(len(audio), 1), window), 1):
+            offset = start / SAMPLE_RATE
+            # 这一步是内存的高峰。真被系统干掉时，日志最后一行就是唯一的线索
+            runtime.trace(f"转写窗口 {index}/{total}（{self.model_size}）{runtime.memory_note()}")
+            results.extend(
+                self._transcribe_window(
+                    audio[start : start + window],
+                    offset,
+                    len(audio) / SAMPLE_RATE,
+                    language,
+                    multilingual,
+                    batch_size,
+                    progress,
+                    cancel,
+                )
+            )
+        if progress:
+            progress(1.0)
+        return results
+
+    def _transcribe_window(
+        self, audio, offset, total, language, multilingual, batch_size, progress, cancel
+    ) -> list[Segment]:
+        """转写一个窗口，时间戳按 ``offset`` 平移回整轨的坐标系。"""
         raw_segments, info = self.batched.transcribe(
             audio,
             language=language,
@@ -186,16 +227,16 @@ class Transcriber:
             condition_on_previous_text=False,
         )
 
-        duration = info.duration or 0.0
         results = []
         for seg in raw_segments:
             if cancel is not None and cancel.is_set():
                 raise Cancelled()
-            results.extend(_to_cues(seg, info.language))
-            if progress and duration:
-                progress(min(seg.end / duration, 1.0))
-        if progress:
-            progress(1.0)
+            for cue in _to_cues(seg, info.language):
+                cue.start += offset
+                cue.end += offset
+                results.append(cue)
+            if progress and total:
+                progress(min((offset + seg.end) / total, 1.0))
         return results
 
     def label_languages(

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from . import runtime
 from .asr import Transcriber, default_model
 from .audio import AudioTrack, decode_track, probe_tracks
 from .i18n import t
@@ -105,14 +106,17 @@ class Engine:
             )
         track = tracks[options.track_index]
         reporter = _Reporter(_plan(options), progress)
+        runtime.trace(f"开始处理 {name}（音轨 {options.track_index + 1}/{len(tracks)}）")
 
         audio = decode_track(path, options.track_index, reporter.stage("解码音轨"))
+        runtime.trace(f"解码完成 {len(audio) / 16000 / 60:.1f} 分钟 {runtime.memory_note()}")
 
         source = options.source_language
         if source is None:
             source, _ = self.transcriber.detect_language(audio)
             reporter.done("识别语种")
 
+        runtime.trace(f"转写开始，语种 {source}")
         segments = self.transcriber.transcribe(
             audio,
             # 多语种模式交给模型逐窗口重判，不锁定语种
@@ -147,6 +151,7 @@ class Engine:
         cues = _build_cues(segments, translations, options.layout)
         outputs = _write(path, cues, options, source)
         reporter.done("写出文件")
+        runtime.trace(f"完成 {name}，{len(cues)} 条字幕")
         return Result(path, track, source, _spans(segments), cues, outputs)
 
     def _translate(self, segments, target, progress, cancel):

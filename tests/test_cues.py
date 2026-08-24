@@ -93,3 +93,64 @@ def test_cpu_threads_leaves_a_core_for_the_interface():
     from subtitle_tool.asr import cpu_threads
 
     assert 1 <= cpu_threads() <= max(1, (os.cpu_count() or 4) - 1)
+
+
+class _FakeInfo:
+    language = "en"
+    duration = 600.0
+
+
+class _FakeSegment:
+    words = None
+
+    def __init__(self, start, end, text):
+        self.start, self.end, self.text = start, end, text
+
+
+class _FakeBatched:
+    """替掉 faster-whisper 的批量管线，只回一条固定结果。"""
+
+    def __init__(self):
+        self.window_samples = []
+
+    def transcribe(self, audio, **kwargs):
+        self.window_samples.append(len(audio))
+        return iter([_FakeSegment(1.0, 2.0, "hello")]), _FakeInfo()
+
+
+def test_long_audio_is_cut_into_windows_with_shifted_timestamps():
+    """整轨一次性喂给模型会让内存跟着片长涨，长片直接把进程撑爆（v0.3.0 的闪退）。
+
+    按窗口切开之后，各窗口的时间戳必须平移回整轨的坐标系。
+    """
+    import numpy as np
+
+    from subtitle_tool.asr import WINDOW_SECONDS, Transcriber
+    from subtitle_tool.audio import SAMPLE_RATE
+
+    transcriber = Transcriber.__new__(Transcriber)  # 不加载模型
+    transcriber.batched = _FakeBatched()
+    transcriber.model_size = "tiny"
+
+    audio = np.zeros(int(SAMPLE_RATE * WINDOW_SECONDS * 2.5), dtype="float32")
+    segments = transcriber.transcribe(audio, language="en")
+
+    assert len(transcriber.batched.window_samples) == 3
+    assert [s.start for s in segments] == [1.0, WINDOW_SECONDS + 1.0, WINDOW_SECONDS * 2 + 1.0]
+    assert [s.end for s in segments] == [2.0, WINDOW_SECONDS + 2.0, WINDOW_SECONDS * 2 + 2.0]
+
+
+def test_short_audio_still_goes_through_in_one_piece():
+    """短于一个窗口的音轨走的还是原来那条路，结果不该有任何变化。"""
+    import numpy as np
+
+    from subtitle_tool.asr import Transcriber
+    from subtitle_tool.audio import SAMPLE_RATE
+
+    transcriber = Transcriber.__new__(Transcriber)
+    transcriber.batched = _FakeBatched()
+    transcriber.model_size = "tiny"
+
+    segments = transcriber.transcribe(np.zeros(SAMPLE_RATE * 30, dtype="float32"), language="en")
+    assert len(transcriber.batched.window_samples) == 1
+    assert [(s.start, s.end) for s in segments] == [(1.0, 2.0)]

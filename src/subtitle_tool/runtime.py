@@ -8,6 +8,7 @@ import inspect
 import os
 import sys
 import threading
+import time
 import traceback
 
 #: 清理记录，内容是清理过的版本号。不在发布清单里，得手动放过
@@ -22,10 +23,10 @@ _LOG_LIMIT = 1_000_000
 
 
 def log_path() -> str:
-    """崩溃日志的位置。窗口模式下没有控制台，出了事只能往这儿写。"""
-    from .settings import path as settings_path
+    """日志位置：和设置放在一起，也就是打包版 exe 的同级目录。"""
+    from .settings import directory
 
-    return os.path.join(os.path.dirname(settings_path()), "subtitle-tool.log")
+    return os.path.join(directory(), "subtitle-tool.log")
 
 
 def log(text: str) -> None:
@@ -42,6 +43,50 @@ def log(text: str) -> None:
             handle.write(text)
     except OSError:
         pass
+
+
+def trace(step: str) -> None:
+    """记一步「走到哪儿了」，每条都落盘。
+
+    进程要是被系统直接干掉（C++ 里内存分配失败是 abort，连 Python 异常都没有），
+    事后唯一能拿到的线索就是这份流水账的最后一行。所以宁可多写几行。
+    """
+    log(f"[{time.strftime('%H:%M:%S')}] {step}\n")
+
+
+def memory_note() -> str:
+    """当前可用内存，写进流水账用。取不到就空着。"""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class _Status(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _Status()
+            status.dwLength = ctypes.sizeof(_Status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            free = status.ullAvailPhys / 1073741824
+            total = status.ullTotalPhys / 1073741824
+            return f"内存可用 {free:.1f}/{total:.1f}GB"
+        with open("/proc/meminfo") as handle:
+            values = {}
+            for line in handle:
+                name, _, rest = line.partition(":")
+                values[name] = int(rest.split()[0]) / 1048576
+        return f"内存可用 {values['MemAvailable']:.1f}/{values['MemTotal']:.1f}GB"
+    except Exception:
+        return ""
 
 
 def report_crashes() -> None:
