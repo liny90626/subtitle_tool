@@ -12,6 +12,7 @@ the language you want. Everything runs locally — nothing is uploaded.
 - 🈯 **Any target language** — 99 of them, written out as translation / source / both
 - 📄 **SRT / VTT / TXT**, batch processing, cancel at any time
 - 🌐 **Chinese and English interface** — follows your system language, switchable at any time
+- 🧳 **Truly portable** — settings and logs live next to the executable; copy the folder, keep everything
 - 🔌 **Works offline** — after the first download the models are reused from the local cache
 
 ## Quick start
@@ -34,7 +35,9 @@ The interface follows your system language and can be switched to 中文 or Engl
 **Upgrading**: just unpack the new version over the old directory. On startup the program
 removes whatever the previous version left behind, using the file list shipped with the
 build. The model cache lives in your user folder, outside the program directory, so nothing
-has to be downloaded again.
+has to be downloaded again, and `settings.json` is kept.
+
+Only one copy runs at a time; opening it again tells you it is already running.
 
 ![Interface](docs/screenshot.en.png)
 
@@ -83,12 +86,13 @@ order:
    that has access and copy the whole `%USERPROFILE%\.cache\huggingface` folder to the same
    place on this one.
 
-The settings live in `%APPDATA%\subtitle-tool\settings.json` and are shared with the command
+The settings live in `settings.json` next to the executable and are shared with the command
 line. Once a model has been downloaded it is loaded from the local cache and the program
 stops going online for it.
 
-If the program ever quits unexpectedly, `%APPDATA%\subtitle-tool\subtitle-tool.log` holds the
-traceback — please attach it when reporting the problem.
+`subtitle-tool.log`, also next to the executable, keeps a running trace of each job (decoding,
+which window is being transcribed, free memory at the time) — please attach it when reporting
+a problem.
 
 ## Command line
 
