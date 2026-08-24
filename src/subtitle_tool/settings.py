@@ -1,11 +1,15 @@
 """程序设置：模型下载源、代理、界面语言。图形界面与命令行共用一份。
 
-存在 ``%APPDATA%\\subtitle-tool\\settings.json``（其它平台放 ``~/.config``）。
+免安装包是解压即用的，设置和日志就放在 exe 同级目录——拷走整个文件夹就带走了全部状态，
+不用去 %APPDATA% 里翻。装在只读目录（Program Files 之类）时退回用户目录，免得连设置都
+存不下来。源码运行时没有 exe，同样放用户目录。
+
 读坏了一律退回默认值——一个设置文件不该让程序起不来。
 """
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 
 #: 「跟着环境走」：下载源指自动选源，界面语言指跟随系统
@@ -21,10 +25,45 @@ class Settings:
     language: str = AUTO  #: 界面语言：AUTO / zh / en
 
 
+_directory = None
+
+
+def directory() -> str:
+    """设置和日志所在的目录。打包版就在 exe 旁边。"""
+    global _directory
+    if _directory is None:
+        _directory = _writable(_beside_executable()) or _user_directory()
+    return _directory
+
+
 def path() -> str:
-    """设置文件路径。Windows 放 %APPDATA%，其它平台放 ~/.config。"""
+    """设置文件路径。"""
+    return os.path.join(directory(), "settings.json")
+
+
+def _beside_executable():
+    """打包版的 exe 同级目录；源码运行时返回 None。"""
+    return os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else None
+
+
+def _user_directory() -> str:
     base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "subtitle-tool", "settings.json")
+    return os.path.join(base, "subtitle-tool")
+
+
+def _writable(candidate):
+    """能写才用它。装在 Program Files 下时这里会失败，那就退回用户目录。"""
+    if candidate is None:
+        return None
+    probe = os.path.join(candidate, ".write-test")
+    try:
+        os.makedirs(candidate, exist_ok=True)
+        with open(probe, "w"):
+            pass
+        os.remove(probe)
+        return candidate
+    except OSError:
+        return None
 
 
 def load() -> Settings:

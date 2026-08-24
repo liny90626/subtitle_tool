@@ -14,3 +14,11 @@ def chinese_interface():
     from subtitle_tool import i18n
 
     i18n.use("zh")
+
+
+@pytest.fixture(autouse=True)
+def fresh_settings_directory():
+    """设置目录只探一次就缓存，测试之间得清掉，不然换 APPDATA 不生效。"""
+    from subtitle_tool import settings
+
+    settings._directory = None
