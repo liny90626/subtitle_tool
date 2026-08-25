@@ -63,6 +63,8 @@ class Engine:
         self.notify = notify
         #: 本次 run() 的取消信号。模型是用到才加载的，几百 MB 的下载也得能中断
         self._cancel = None
+        #: (窗口秒数, 批大小)。上一次跑崩了之后由外面写死成更保守的一档，不再自动挑
+        self.force_profile = None
         self._transcriber = None
         self._translator = None
 
@@ -137,7 +139,10 @@ class Engine:
             source, _ = self.transcriber.detect_language(audio)
             reporter.done("识别语种")
 
-        window, batch, note = runtime.plan_transcription(self.model_size, len(audio) / 16000)
+        if self.force_profile:
+            (window, batch), note = self.force_profile, None
+        else:
+            window, batch, note = runtime.plan_transcription(self.model_size, len(audio) / 16000)
         if note:
             runtime.trace(note)
             if self.notify:

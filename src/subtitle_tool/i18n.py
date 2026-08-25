@@ -136,6 +136,12 @@ _ENGLISH = {
     "⚠ 无法读取 {name}：{error}": "⚠ Could not read {name}: {error}",
     "⚠ {name} 没有音轨，已跳过": "⚠ {name} has no audio track, skipped",
     "⚠ 上次运行没有正常结束，停在：{step}": "⚠ The last run did not finish. It stopped at: {step}",
+    "⚠ 处理时异常退出，正在用更保守的配置重试（会慢一些）": (
+        "⚠ The job died unexpectedly; retrying with a more conservative setup (slower)"
+    ),
+    "这个文件处理时异常退出，已跳过。详情见程序目录下的 subtitle-tool.log": (
+        "This file died unexpectedly and was skipped — see subtitle-tool.log next to the program"
+    ),
     "如果是闪退，多半是内存不够，换更小的识别模型再试": (
         "If it vanished, it most likely ran out of memory — try a smaller speech model"
     ),

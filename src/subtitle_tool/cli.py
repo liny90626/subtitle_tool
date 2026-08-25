@@ -3,13 +3,12 @@
 import argparse
 import sys
 
-from . import hub, i18n, runtime, settings
+from . import hub, i18n, runtime, settings, worker
 from .asr import MODEL_SIZES, default_model
 from .audio import probe_tracks
-from .errors import Cancelled, DownloadError
 from .i18n import t
 from .languages import describe_whisper, flores_name, resolve_target, target_choices
-from .pipeline import LAYOUTS, Engine, Options
+from .pipeline import LAYOUTS, Options
 from .subtitles import FORMATS
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
 from .translate import MODEL_REPOS
@@ -138,29 +137,60 @@ def main(argv=None) -> int:
         formats=formats,
         output_dir=args.output_dir,
     )
-    engine = Engine(args.model, args.device, args.translate_model, args.model_dir, _note)
+    jobs = [worker.Job(index, video, options) for index, video in enumerate(args.videos)]
+    setup = worker.Setup(args.model, args.device, args.translate_model, args.model_dir)
+    failed = _run(jobs, setup, args, target)
 
-    failed = 0
-    for video in args.videos:
-        print(f"→ {video}")
-        try:
-            result = engine.run(video, options, progress=_print_progress)
-        except Cancelled:
-            return 130
-        except DownloadError as error:
-            # 模型下不下来跟具体文件无关，后面的文件只会一模一样地再失败一遍
-            _overwrite(f"  ✗ {error}")
-            return 1
-        except (ValueError, OSError, MemoryError) as error:
-            # 批处理里一个文件坏掉不该中断其余文件，但退出码要如实反映失败
-            _overwrite(f"  ✗ {error}")
-            failed += 1
-            continue
+    runtime.finished()
+    return 1 if failed else 0
+
+
+def _run(jobs, setup, args, target) -> int:
+    """跑完所有文件，返回失败个数。
+
+    和图形界面共用同一套驱动：流水线在子进程里跑，原生层崩掉时这边还能换保守配置重试，
+    而不是整个命令行跟着一起消失。
+    """
+    paths = {job.row: job.path for job in jobs}
+    started, failed = set(), set()
+
+    def heading(row):
+        if row not in started:
+            started.add(row)
+            print(f"→ {paths[row]}")
+
+    def progress(row, stage, fraction):
+        heading(row)
+        _print_progress(stage, fraction)
+
+    def done(row, result):
+        heading(row)
         _overwrite("  " + _summary(result, args.multi_language, target))
         for out in result.outputs:
             print(f"  ✓ {out}")
-    runtime.finished()
-    return 1 if failed else 0
+
+    def failure(row, message):
+        heading(row)
+        failed.add(row)
+        _overwrite(f"  ✗ {message}")
+
+    worker.drive(
+        jobs,
+        setup,
+        worker.Events(
+            progress=progress,
+            note=_note,
+            done=done,
+            failed=failure,
+            retry=lambda: _overwrite(
+                "  " + t("⚠ 处理时异常退出，正在用更保守的配置重试（会慢一些）")
+            ),
+            give_up=lambda row: failure(
+                row, t("这个文件处理时异常退出，已跳过。详情见程序目录下的 subtitle-tool.log")
+            ),
+        ),
+    )
+    return len(failed)
 
 
 def _summary(result, multi_language, target) -> str:

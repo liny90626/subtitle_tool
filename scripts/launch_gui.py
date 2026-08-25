@@ -8,15 +8,16 @@ import multiprocessing
 import sys
 
 if __name__ == "__main__":
-    # CTranslate2 / onnxruntime 的工作进程在 Windows 上会重新执行本文件，
-    # 不冻结的话会不断弹出新窗口
-    multiprocessing.freeze_support()
-
-    # 这两件事要赶在别的东西之前：窗口模式下没有标准流，任何一次 print 都会炸；
-    # 覆盖安装留下的旧 .pyd 可能被抢先加载
+    # 补标准流必须排在 freeze_support 之前：窗口模式下没有标准流，任何一次 print 都会炸，
+    # 而 freeze_support 在子进程里根本不会返回——排在后面的话子进程就补不上了
     from subtitle_tool import runtime
 
     runtime.silence_missing_streams()
+
+    # 流水线和 CTranslate2 / onnxruntime 的工作进程都会重新执行本文件，
+    # 不冻结的话会不断弹出新窗口
+    multiprocessing.freeze_support()
+
     runtime.report_crashes()
     runtime.clean_leftovers()
 

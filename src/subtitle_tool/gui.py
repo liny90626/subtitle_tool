@@ -34,12 +34,12 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, hub, i18n, runtime, settings
+from . import worker as subprocess_worker
 from .asr import MODEL_SIZES, default_model, pick_device
 from .audio import probe_tracks
-from .errors import Cancelled, DownloadError
 from .i18n import t
 from .languages import describe_whisper, flores_name, target_choices
-from .pipeline import Engine, Options
+from .pipeline import Options
 from .subtitles import FORMATS
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
 from .translate import MODEL_REPOS
@@ -142,29 +142,28 @@ def icon() -> QIcon:
 
 
 class Worker(QThread):
-    """在后台线程里跑流水线，避免界面卡死。"""
+    """在后台线程里盯着子进程跑完整批任务。
+
+    流水线本身跑在子进程里（见 :mod:`subtitle_tool.worker`）：原生层崩掉时倒下的是子进程，
+    界面还在，能把那一条标成失败、换更保守的配置重试，剩下的文件照常处理。
+    """
 
     progress = Signal(int, str, float)
     finished_file = Signal(int, object, object)  # 行号, Result, 异常
     load_failed = Signal(object)
-    all_done = Signal(object)  # 把加载好的 Engine 交还主线程复用
+    all_done = Signal(object)
 
-    def __init__(self, jobs, engine, engine_factory):
+    def __init__(self, jobs, setup):
         super().__init__()
-        self.jobs = jobs  # [(行号, 文件路径, Options), ...]
-        self.engine = engine
-        self.engine_factory = engine_factory  # 收一个提示回调，返回加载好的 Engine
+        self.jobs = jobs  # [worker.Job, ...]
+        self.setup = setup
         self.cancel = threading.Event()
         self._notes = []  # 攒下的一次性提示
         self._progress = None  # 最新的下载进度
         self._lock = threading.Lock()
 
     def note(self, message, fraction):
-        """模型下载的提示与进度。
-
-        这个回调会从 huggingface_hub / hf_xet 自己的线程里被调到，那些线程 Qt 从没
-        见过。所以不在这儿碰 Qt（信号也不发），只把状态记下来，界面用定时器自己来取。
-        """
+        """模型下载的提示与进度，来自子进程，不在这儿碰 Qt。"""
         with self._lock:
             if fraction is None:
                 self._notes.append(message)
@@ -179,39 +178,30 @@ class Worker(QThread):
         return notes, progress
 
     def run(self):
-        try:
-            if self.engine is None:
-                # 在这个线程里加载，下载/初始化模型都不卡界面
-                self.engine = self.engine_factory(self.note)
-        except Exception as error:
-            # 模型下载/加载失败（断网、磁盘不够）。不报出来的话线程直接死掉，
-            # all_done 永远不发，界面会一直卡在「运行中」，开始按钮再也点不动
-            self.load_failed.emit(error)
-            self.all_done.emit(None)
-            return
-        for row, path, options in self.jobs:
-            if self.cancel.is_set():
-                break
-            try:
-                result = self.engine.run(
-                    path,
-                    options,
-                    progress=lambda stage, fraction, row=row: self.progress.emit(
-                        row, stage, fraction
+        subprocess_worker.drive(
+            self.jobs,
+            self.setup,
+            subprocess_worker.Events(
+                progress=self.progress.emit,
+                note=self.note,
+                done=lambda row, result: self.finished_file.emit(row, result, None),
+                failed=lambda row, message: self.finished_file.emit(
+                    row, None, RuntimeError(message)
+                ),
+                retry=lambda: self.note(
+                    t("⚠ 处理时异常退出，正在用更保守的配置重试（会慢一些）"), None
+                ),
+                give_up=lambda row: self.finished_file.emit(
+                    row,
+                    None,
+                    RuntimeError(
+                        t("这个文件处理时异常退出，已跳过。详情见程序目录下的 subtitle-tool.log")
                     ),
-                    cancel=self.cancel,
-                )
-                self.finished_file.emit(row, result, None)
-            except Cancelled:
-                break
-            except DownloadError as error:
-                # 模型下不下来跟具体文件无关，后面的文件只会一模一样再失败一遍
-                self.load_failed.emit(error)
-                break
-            except Exception as error:
-                # 一个文件失败不该中断整批；异常原样交给界面显示并记下堆栈，不吞
-                self.finished_file.emit(row, None, error)
-        self.all_done.emit(self.engine)
+                ),
+            ),
+            cancel=self.cancel,
+        )
+        self.all_done.emit(None)
 
 
 class MainWindow(QWidget):
@@ -220,8 +210,6 @@ class MainWindow(QWidget):
         self.resize(1020, 720)
         self.setAcceptDrops(True)
         self.worker = None
-        self.engine = None
-        self.engine_key = None
         self._texts = []  # 切语言时要重新渲染的文案
         self._build()
 
@@ -602,22 +590,20 @@ class MainWindow(QWidget):
                 formats=formats,
                 output_dir=self.output_dir.text().strip() or None,
             )
-            jobs.append((row, self.table.item(row, 0).data(Qt.UserRole), options))
+            path = self.table.item(row, 0).data(Qt.UserRole)
+            jobs.append(subprocess_worker.Job(row, path, options))
             self._set_status(row, "等待中")
 
         self._save_settings()
-
-        key = (
-            self.model.currentText(),
-            self.device.currentData(),
-            self.translate_model.currentText(),
-        )
-        if key != self.engine_key:
-            self.engine, self.engine_key = None, key
-            self._log(t("载入模型 {model}…", model=key[0]))
+        self._log(t("载入模型 {model}…", model=self.model.currentText()))
 
         self.worker = Worker(
-            jobs, self.engine, lambda notify: Engine(key[0], key[1], key[2], notify=notify)
+            jobs,
+            subprocess_worker.Setup(
+                model_size=self.model.currentText(),
+                device=self.device.currentData(),
+                translate_model=self.translate_model.currentText(),
+            ),
         )
         self.worker.progress.connect(self._guarded(self._on_progress))
         self.worker.finished_file.connect(self._guarded(self._on_file_done))
@@ -712,10 +698,9 @@ class MainWindow(QWidget):
         )
         QMessageBox.critical(self, t("模型加载失败"), f"{error}{hint}")
 
-    def _on_all_done(self, engine):
+    def _on_all_done(self, _engine=None):
         self._drain_notes()  # 收个尾，最后几条提示别丢
         self.notes.stop()
-        self.engine = engine
         self._set_running(False)
         self._sync_layout_enabled()
         self.bar.setValue(0)
