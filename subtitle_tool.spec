@@ -5,6 +5,9 @@
 目录，冷启动要十几秒，且杀毒软件误报率高。
 """
 
+import os
+import sys
+
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 # Silero VAD 的 onnx 权重随 faster-whisper 一起分发，不打进去运行时会找不到；
@@ -150,10 +153,20 @@ coll = COLLECT(
     name="subtitle-tool",
 )
 
+# Windows 上线程默认栈只有 1.91MB（PyInstaller 引导器写死在 PE 头里），Linux 是 8MB。
+# 转写长片时 CTranslate2 的工作线程会踩爆它，表现为进程以 0xC00000FD 直接消失——同一份
+# 代码在 Linux 上永远复现不出来。这里把 PE 头里的栈保留改到 16MB。
+sys.path.insert(0, os.path.join(SPECPATH, "scripts"))
+import patch_stack
+
+_exe = os.path.join(DISTPATH, coll.name, "SubtitleTool.exe")
+if os.path.exists(_exe):
+    _was = patch_stack.patch(_exe)
+    print(f"stack reserve {_was / 1048576:.2f}MB -> {patch_stack.STACK_RESERVE / 1048576:.0f}MB")
+
 # 发布清单：免安装包是解压即用的，用户升级时习惯直接覆盖到原目录，旧版多出来的
 # DLL / .pyd 会留在那儿白占地方，甚至被 Python 抢先加载。程序启动时按这份清单把
 # 不属于本次发布的文件清掉（见 subtitle_tool/runtime.py）。
-import os
 
 internal = os.path.join(DISTPATH, coll.name, "_internal")
 shipped = sorted(

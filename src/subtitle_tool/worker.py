@@ -12,12 +12,22 @@
 
 import multiprocessing
 import queue as queue_module
+import threading
 from dataclasses import dataclass, replace
 from typing import Optional
 
 #: 子进程被系统干掉后，换这套更保守的配置再试一次
 SAFE_WINDOW = 150.0
 SAFE_BATCH = 1
+
+#: 干活线程的栈大小。
+#:
+#: Windows 上线程默认栈只有 1.91MB（PyInstaller 引导器写在 PE 头里的），而 Linux 是 8MB
+#: ——同一份代码在 Linux 上怎么跑都没事，到 Windows 上转写长片就以 0xC00000FD
+#: (STATUS_STACK_OVERFLOW) 整个进程消失。exe 那边已经把 PE 头改成 16MB（见
+#: scripts/patch_stack.py），这里再给自己起的线程显式指定一次：从源码跑、或者哪天打包
+#: 流程变了，这条还兜得住。
+STACK_SIZE = 64 * 1024 * 1024
 
 
 @dataclass
@@ -42,9 +52,20 @@ class Setup:
 
 
 def run(jobs, setup: Setup, channel, cancel) -> None:
-    """子进程入口：把 ``jobs`` 跑完，进度和结果都从 ``channel`` 发回去。
+    """子进程入口：把活挪到一个栈更大的线程上跑（原因见 :data:`STACK_SIZE`）。"""
+    try:
+        threading.stack_size(STACK_SIZE)
+    except (ValueError, RuntimeError):
+        pass  # 平台不让设就算了，PE 头那一层还在
+    thread = threading.Thread(target=_work, args=(jobs, setup, channel, cancel))
+    thread.start()
+    thread.join()
 
-    这个函数在子进程里执行，模块级导入必须能被 spawn 重新跑一遍，所以重活都在函数里导。
+
+def _work(jobs, setup: Setup, channel, cancel) -> None:
+    """真正把 ``jobs`` 跑完，进度和结果都从 ``channel`` 发回去。
+
+    在子进程里执行，模块级导入必须能被 spawn 重新跑一遍，所以重活都在函数里导。
     """
     from . import runtime
     from .errors import Cancelled
@@ -162,7 +183,7 @@ def _run_batch(jobs, setup: Setup, events: Events, cancel, safe: bool, spawn):
                 return [], False
             if not process.is_alive():
                 # 没等到 finished 就没了：原生层把子进程带走了
-                runtime.trace(f"子进程异常退出（退出码 {process.exitcode}）")
+                runtime.trace(f"子进程异常退出（退出码 {runtime.describe_exit(process.exitcode)}）")
                 return [pending[row] for row in sorted(pending)], True
     finally:
         if process.is_alive():

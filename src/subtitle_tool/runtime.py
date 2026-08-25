@@ -48,6 +48,21 @@ def log(text: str) -> None:
         pass
 
 
+def start_log() -> None:
+    """开一份新日志。
+
+    每次启动都从头来，不然跑上几十次之后翻日志找线索就成了大海捞针。上一次没收尾的话，
+    调用方要先用 last_unfinished() 把最后那行读走再调这里。
+    """
+    path = log_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8"):
+            pass
+    except OSError:
+        pass
+
+
 def trace(step: str) -> None:
     """记一步「走到哪儿了」，每条都落盘。
 
@@ -55,6 +70,28 @@ def trace(step: str) -> None:
     事后唯一能拿到的线索就是这份流水账的最后一行。所以宁可多写几行。
     """
     log(f"[{time.strftime('%H:%M:%S')}] {step}\n")
+
+
+#: Windows 上进程被内核干掉时的常见状态码。翻成人话，省得下次还要靠猜
+_EXIT_CODES = {
+    0xC00000FD: "栈溢出",
+    0xC0000005: "访问越界",
+    0xC000001D: "非法指令（CPU 不支持某条指令）",
+    0xC0000409: "栈缓冲区检查失败",
+    0xC0000374: "堆损坏",
+    0xC0000017: "内存不足",
+    0xC000013A: "被 Ctrl+C 中断",
+}
+
+
+def describe_exit(code) -> str:
+    """把子进程的退出码翻成能看懂的一句话。"""
+    if code is None:
+        return "未知"
+    if code < 0:  # POSIX：负数是信号
+        return f"信号 {-code}"
+    name = _EXIT_CODES.get(code & 0xFFFFFFFF)
+    return f"{code}（{name}）" if name else str(code)
 
 
 #: 正常收尾时写的最后一行，用来判断上次是不是被中途干掉的
