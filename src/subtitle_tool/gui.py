@@ -754,7 +754,8 @@ def main():
         notice.exec()
         return 0
 
-    unfinished = runtime.last_unfinished()  # 得在写新日志之前读
+    unfinished = runtime.last_unfinished()  # 得赶在清掉旧日志之前读
+    runtime.start_log()  # 每次启动都从头记，不然翻日志找线索成了大海捞针
     runtime.trace(f"程序启动 v{__version__} {runtime.memory_note()}")
 
     window = MainWindow()

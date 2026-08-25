@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from . import hub, i18n, runtime, settings, worker
+from . import __version__, hub, i18n, runtime, settings, worker
 from .asr import MODEL_SIZES, default_model
 from .audio import probe_tracks
 from .i18n import t
@@ -78,6 +78,8 @@ def main(argv=None) -> int:
     saved = settings.load()
     # --lang 得赶在建 parser 之前生效，否则 --help 打出来还是上一种语言
     i18n.use(_early_language(argv) or saved.language)
+    runtime.start_log()  # 每次运行都从头记，不然翻日志找线索成了大海捞针
+    runtime.trace(f"命令行启动 v{__version__} {runtime.memory_note()}")
     args = build_parser().parse_args(argv)
 
     if args.list_languages:
