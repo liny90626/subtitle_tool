@@ -126,6 +126,9 @@ jobs:
             throw "日志还写到 %APPDATA% 去了"
           }
           "--- 运行流水账 ---"; Get-Content "smoke/subtitle-tool.log"
+          if (-not (Select-String -Path "smoke/subtitle-tool.log" -Pattern "启动子进程" -Quiet)) {
+            throw "打包后的程序没能起子进程，崩溃隔离就失效了"
+          }
 
           # 图形界面能起来且不会秒退
           $g = Start-Process $exe -PassThru
