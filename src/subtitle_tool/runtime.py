@@ -53,7 +53,14 @@ def start_log() -> None:
 
     每次启动都从头来，不然跑上几十次之后翻日志找线索就成了大海捞针。上一次没收尾的话，
     调用方要先用 last_unfinished() 把最后那行读走再调这里。
+
+    只有真正的主进程能清：流水线跑在子进程里，子进程要是也来清一次，父进程刚记下的
+    那几行就没了——而那几行正是出事时唯一的线索。
     """
+    import multiprocessing
+
+    if multiprocessing.parent_process() is not None:
+        return
     path = log_path()
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)

@@ -159,3 +159,22 @@ def test_an_exception_in_a_slot_is_reported_not_fatal(tmp_path, monkeypatch):
 
 def test_a_healthy_slot_still_returns_its_value():
     assert runtime.guarded(lambda a: a * 2)(21) == 42
+
+
+def test_only_the_main_process_may_rotate_the_log(tmp_path, monkeypatch):
+    """子进程清日志会把父进程刚记下的线索抹掉，那几行恰恰是出事时唯一的证据。"""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    runtime.trace("父进程记的一行")
+
+    class _Parent:
+        pass
+
+    monkeypatch.setattr("multiprocessing.parent_process", lambda: _Parent())
+    runtime.start_log()
+    with open(runtime.log_path(), encoding="utf-8") as handle:
+        assert "父进程记的一行" in handle.read()
+
+    monkeypatch.setattr("multiprocessing.parent_process", lambda: None)
+    runtime.start_log()
+    with open(runtime.log_path(), encoding="utf-8") as handle:
+        assert handle.read() == ""
