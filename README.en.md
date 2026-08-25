@@ -172,6 +172,8 @@ are written up in [docs/design.md](docs/design.md) (Chinese).
   not fit you get a clear message instead of a crash
 - Per-segment language detection works in 30-second groups, so a language change inside one
   group follows the majority of that group
+- Transcription runs in a child process: if a native library crashes, the window survives and
+  the job is retried once with a more conservative setup
 
 ## Licence
 
