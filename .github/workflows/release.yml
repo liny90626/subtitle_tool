@@ -114,6 +114,19 @@ jobs:
           if (-not (Test-Path "out/jfk.zh.srt")) { throw "没有写出字幕文件" }
           Get-Content "out/jfk.zh.srt" -Encoding utf8 | Select-Object -First 4
 
+          # 日志和设置要落在 exe 同级目录，不是 %APPDATA%
+          if (-not (Test-Path "smoke/subtitle-tool.log")) { throw "日志没写在 exe 同级目录" }
+          if (Test-Path (Join-Path $env:APPDATA "subtitle-tool\subtitle-tool.log")) {
+            throw "日志还写到 %APPDATA% 去了"
+          }
+          "--- 运行流水账 ---"; Get-Content "smoke/subtitle-tool.log"
+          if (-not (Select-String -Path "smoke/subtitle-tool.log" -Pattern "启动子进程" -Quiet)) {
+            throw "打包后的程序没能起子进程，崩溃隔离就失效了"
+          }
+          if (Select-String -Path "smoke/subtitle-tool.log" -Pattern "Traceback" -Quiet) {
+            throw "日志里有异常堆栈"
+          }
+
           # 覆盖升级：旧版残留该被清掉，清完还得能正常跑
           "旧版残留" | Out-File "smoke/_internal/leftover-from-old-version.dll"
           Remove-Item "smoke/_internal/cleaned.txt"
@@ -124,14 +137,12 @@ jobs:
             throw "清理把该留的文件删掉了"
           }
 
-          # 日志和设置要落在 exe 同级目录，不是 %APPDATA%
-          if (-not (Test-Path "smoke/subtitle-tool.log")) { throw "日志没写在 exe 同级目录" }
-          if (Test-Path (Join-Path $env:APPDATA "subtitle-tool\subtitle-tool.log")) {
-            throw "日志还写到 %APPDATA% 去了"
+          # 上面这次运行应当把日志重开：不再有上一次的内容，但有这一次的开头
+          if (Select-String -Path "smoke/subtitle-tool.log" -Pattern "完成 jfk" -Quiet) {
+            throw "日志没有重开，会一直累加下去"
           }
-          "--- 运行流水账 ---"; Get-Content "smoke/subtitle-tool.log"
-          if (-not (Select-String -Path "smoke/subtitle-tool.log" -Pattern "启动子进程" -Quiet)) {
-            throw "打包后的程序没能起子进程，崩溃隔离就失效了"
+          if (-not (Select-String -Path "smoke/subtitle-tool.log" -Pattern "启动" -Quiet)) {
+            throw "重开之后连启动那一行都没有"
           }
 
           # 图形界面能起来且不会秒退
@@ -150,9 +161,9 @@ jobs:
           Stop-Process -Id $g.Id -Force
           if (-not (Test-Path "smoke/settings.json")) { throw "设置没写在 exe 同级目录" }
 
-          # 日志里出现 Traceback 就说明上面某一步悄悄出事了
+          # 界面那几次运行也不该留下异常堆栈
           if (Select-String -Path "smoke/subtitle-tool.log" -Pattern "Traceback" -Quiet) {
-            Get-Content "smoke/subtitle-tool.log"; throw "日志里有异常堆栈"
+            Get-Content "smoke/subtitle-tool.log"; throw "界面运行时出了异常"
           }
 
           "解压后体积：{0:N0} MB" -f ((Get-ChildItem smoke -Recurse |
