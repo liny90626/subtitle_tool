@@ -90,9 +90,9 @@ The settings live in `settings.json` next to the executable and are shared with 
 line. Once a model has been downloaded it is loaded from the local cache and the program
 stops going online for it.
 
-`subtitle-tool.log`, also next to the executable, keeps a running trace of each job (decoding,
-which window is being transcribed, free memory at the time) — please attach it when reporting
-a problem.
+`subtitle-tool.log`, also next to the executable, traces the current run (decoding, which window
+is being transcribed, free memory, child-process exit codes). It starts fresh on every launch —
+please attach it when reporting a problem.
 
 ## Command line
 
