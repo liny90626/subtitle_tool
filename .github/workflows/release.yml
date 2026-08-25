@@ -95,6 +95,10 @@ jobs:
           if (-not (Test-Path "smoke/_internal/subtitle_tool/assets/icon.ico")) {
             throw "图标没进压缩包，窗口和任务栏就没图标了"
           }
+          # 线程栈必须调大过，否则转写长片会以 0xC00000FD 整个进程消失
+          $stack = python -c "import struct;d=open('smoke/SubtitleTool.exe','rb').read();p=struct.unpack_from('<I',d,0x3C)[0];print(struct.unpack_from('<Q',d,p+24+72)[0]//1048576)"
+          "exe 线程栈保留 $stack MB"
+          if ([int]$stack -lt 16) { throw "exe 的线程栈没调大（$stack MB），长片会栈溢出" }
 
           # 压缩/解压有没有漏文件——漏了的话程序会在用到那个 DLL 的时候突然消失
           $shipped = @(Get-Content "smoke/_internal/shipped.txt").Count
