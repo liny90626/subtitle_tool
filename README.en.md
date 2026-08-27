@@ -8,7 +8,8 @@ the language you want. Everything runs locally — nothing is uploaded.
 
 - 🎬 **Any video** — MP4 / MKV / MOV / AVI / TS / WebM…, and plain audio files too
 - 🔊 **Multi-track** — lists every audio track in the source (with its language tag) so you can pick
-- 🌍 **99 languages** — detected automatically; a track that mixes languages is labelled segment by segment
+- 🌍 **99 languages** — detected automatically, or pin the source language yourself when the
+  guess goes wrong; a track that mixes languages is labelled segment by segment
 - 🈯 **Any target language** — 99 of them, written out as translation / source / both
 - 📄 **SRT / VTT / TXT**, batch processing, cancel at any time
 - 🌐 **Chinese and English interface** — follows your system language, switchable at any time
@@ -21,6 +22,8 @@ the language you want. Everything runs locally — nothing is uploaded.
    [Releases](https://github.com/liny90626/subtitle_tool/releases)
 2. Unpack it anywhere and double-click `SubtitleTool.exe` — no installation needed
 3. Drop your videos into the window → pick the track and target language → click Start
+   (if you know what the video is in, switch "Source language" from "Auto-detect" to it —
+   the result is steadier that way)
 
 The first run downloads the models (75MB–1.6GB for the speech model depending on the size
 you pick, 620MB for the translation model) and reuses them from then on; by default they
@@ -72,6 +75,25 @@ pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 Copy the DLLs from those two packages next to the executable, or run from source as shown
 below. Leave "Device" on "Auto" — it falls back to the CPU when no GPU is found.
 
+## What the subtitle files are called
+
+Output files are named `video.language.format`, and the language suffix follows the layout:
+
+| Layout | File name | The suffix is |
+| --- | --- | --- |
+| Translation only | `movie.zh.srt` | the target language |
+| Source only | `movie.ja.srt` | the source language |
+| Both | `movie.ja-zh.srt` | source-target |
+
+A file of the same name is always overwritten. In the bilingual layout, if the previous run
+guessed the source language wrong and left a `movie.en-zh.srt` behind, this run replaces that
+one too instead of piling up a second subtitle — the log says which file it replaced.
+
+The "source only" name carries a single language, and `movie.zh.srt` could equally be a
+**source** transcript detected as Chinese or a **translation** into Chinese — so old files are
+left alone there rather than risking the wrong deletion. Pinning the source language is the
+easiest way to avoid ending up with two.
+
 ## Models will not download
 
 `ConnectTimeout: [WinError 10060]`, or "cannot find the appropriate snapshot folder", both
@@ -105,6 +127,9 @@ subtitle-tool video.mkv --list-tracks
 # Use the second track, produce Chinese subtitles
 subtitle-tool video.mkv --track 2 --target zh
 
+# The video is in Japanese — do not make it guess
+subtitle-tool video.mkv --language ja --target zh
+
 # A track that mixes languages, bilingual SRT + VTT
 subtitle-tool video.mkv --multi-language --target zh --layout bilingual --format srt,vtt
 
@@ -120,7 +145,8 @@ subtitle-tool video.mp4 --target zh --lang en
 ```
 
 `--target` accepts `zh`, `zho_Hans`, `Chinese (Simplified)` and `中文（简体）`;
-`--list-languages` prints every choice.
+`--language` takes Whisper codes only (`ja`, `en`, `zh`…) and defaults to auto-detection.
+`--list-languages` prints the choices for both.
 
 `SubtitleTool.exe` from the portable build *is* the command line when given arguments, so
 you do not need a separate Python install:

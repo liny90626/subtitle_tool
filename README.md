@@ -7,7 +7,7 @@
 
 - 🎬 **任意视频** — MP4 / MKV / MOV / AVI / TS / WebM…，也直接吃音频文件
 - 🔊 **多音轨** — 列出片源里的每条音轨（含语言标签），按需选择
-- 🌍 **多语种** — 自动识别 99 种语言；一条音轨里多语言混说也能逐段识别
+- 🌍 **多语种** — 自动识别 99 种语言，也可以手动锁定源语言避免认错；一条音轨里多语言混说还能逐段识别
 - 🈯 **任选目标语言** — 99 种目标语言，可输出译文 / 原文 / 双语对照
 - 📄 **SRT / VTT / TXT**，批量处理，可随时取消
 - 🌐 **中英双语界面** — 默认跟随系统语言，设置里随时切换
@@ -20,6 +20,7 @@
    `subtitle-tool-windows-x64.zip`
 2. 解压到任意目录，双击 `SubtitleTool.exe`（免安装）
 3. 把视频拖进窗口 → 选音轨和目标语言 → 点「开始生成」
+   （知道片子是什么语言的话，把「源语言」从「自动识别」改成对应语种，结果更稳）
 
 首次运行会自动下载模型（识别模型按所选大小 75MB~1.6GB，翻译模型 620MB），
 之后一直复用，默认存放在 `%USERPROFILE%\.cache\huggingface`。
@@ -67,6 +68,24 @@ pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 把这两个包安装目录里的 DLL 放到程序目录，或改用下面的源码方式运行。
 设置里的「设备」保持「自动」即可，检测不到显卡会自动退回 CPU。
 
+## 字幕文件叫什么名字
+
+输出文件名是 `视频名.语种.格式`，语种后缀跟着「排版」走：
+
+| 排版 | 文件名 | 语种后缀是 |
+| --- | --- | --- |
+| 只要译文 | `movie.zh.srt` | 目标语言 |
+| 只要原文 | `movie.ja.srt` | 源语言 |
+| 双语对照 | `movie.ja-zh.srt` | 源语言-目标语言 |
+
+同名文件一律直接覆盖。双语对照下如果上次把源语言识别错了（留下一份
+`movie.en-zh.srt`），这次的结果会把那份旧的一并替换掉，不会在目录里堆两份字幕，
+日志里写明替换了哪个。
+
+「只要原文」的文件名里只有一个语种，光看名字分不出 `movie.zh.srt` 是识别成中文的
+**原文**字幕还是译成中文的**译文**字幕，所以旧文件一概不动，免得误删。
+想彻底避免多出一份，把「源语言」锁死是最省事的办法。
+
 ## 模型下载不动？
 
 报 `ConnectTimeout: [WinError 10060]`，或者「cannot find the appropriate snapshot
@@ -95,6 +114,9 @@ subtitle-tool video.mkv --list-tracks
 # 用第 2 条音轨，生成中文字幕
 subtitle-tool video.mkv --track 2 --target zh
 
+# 片子是日语，别让它自己猜
+subtitle-tool video.mkv --language ja --target zh
+
 # 多语言混说的音轨，输出中英双语 SRT + VTT
 subtitle-tool video.mkv --multi-language --target zh --layout bilingual --format srt,vtt
 
@@ -109,8 +131,9 @@ subtitle-tool video.mp4 --target zh --proxy http://127.0.0.1:7890
 subtitle-tool video.mp4 --target zh --lang en
 ```
 
-`--target` 接受 `zh` / `zho_Hans` / `中文（简体）` / `Chinese (Simplified)` 几种写法，
-`--list-languages` 可以看全部可选语言。
+`--target` 接受 `zh` / `zho_Hans` / `中文（简体）` / `Chinese (Simplified)` 几种写法；
+`--language` 只认 Whisper 码（`ja` / `en` / `zh`…），不给就自动识别。
+`--list-languages` 会把两边可选的值都列出来。
 
 免安装包里的 `SubtitleTool.exe` 带参数运行时就是命令行，不用另外装 Python：
 
