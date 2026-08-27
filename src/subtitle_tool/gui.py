@@ -38,7 +38,7 @@ from . import worker as subprocess_worker
 from .asr import MODEL_SIZES, default_model, pick_device
 from .audio import probe_tracks
 from .i18n import t
-from .languages import describe_whisper, flores_name, target_choices
+from .languages import describe_whisper, flores_name, source_choices, target_choices
 from .pipeline import Options
 from .subtitles import FORMATS
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
@@ -347,10 +347,15 @@ class MainWindow(QWidget):
         engine_row.addWidget(self.detected)
         form.addRow(self._label("识别模型"), engine_row)
 
+        # 不做成可编辑的：打错字时 currentData() 是 None，会不声不响退回自动识别——
+        # 而用户点进来就是为了躲开自动识别
+        self.source_language = QComboBox()
+        self._choices(self.source_language, self._source_language_options)
         self.multi_language = QCheckBox()
         self._text(self.multi_language.setText, "音轨里多种语言混说，逐段识别（会慢一些）")
+        self.multi_language.toggled.connect(self._guarded(self._sync_source_enabled))
         source_row = QHBoxLayout()
-        source_row.addWidget(self._label("自动识别"))
+        source_row.addWidget(self.source_language, 1)
         source_row.addSpacing(12)
         source_row.addWidget(self.multi_language)
         source_row.addStretch(1)
@@ -418,6 +423,12 @@ class MainWindow(QWidget):
         label = QLabel()
         self._text(label.setText, source)
         return label
+
+    def _source_language_options(self):
+        # 自动识别短音轨/口音重的片子会认错，认错了整篇转写都跟着错，所以给个手动锁定
+        return [(t("自动识别"), None)] + [
+            (f"{name}  [{code}]", code) for code, name in source_choices()
+        ]
 
     def _target_options(self):
         return [(t("不翻译（只输出原文）"), None)] + [
@@ -565,6 +576,10 @@ class MainWindow(QWidget):
     def _sync_layout_enabled(self):
         self.layout_mode.setEnabled(self.target.currentData() is not None)
 
+    def _sync_source_enabled(self):
+        # 多语言混说是逐窗口重判语种，锁定一种源语言跟它是矛盾的
+        self.source_language.setEnabled(not self.multi_language.isChecked())
+
     def _on_language_changed(self):
         i18n.use(self.ui_language.currentData())
         self._retranslate()
@@ -580,11 +595,13 @@ class MainWindow(QWidget):
             return
 
         target = self.target.currentData()
+        multi_language = self.multi_language.isChecked()
         jobs = []
         for row in range(self.table.rowCount()):
             options = Options(
                 track_index=self.table.cellWidget(row, 1).currentData(),
-                multi_language=self.multi_language.isChecked(),
+                source_language=None if multi_language else self.source_language.currentData(),
+                multi_language=multi_language,
                 target_language=target,
                 layout=self.layout_mode.currentData() if target else "source",
                 formats=formats,
@@ -638,6 +655,7 @@ class MainWindow(QWidget):
         for widget in (
             self.model,
             self.device,
+            self.source_language,
             self.target,
             self.layout_mode,
             self.translate_model,
@@ -685,6 +703,8 @@ class MainWindow(QWidget):
         self._log(summary + t("，{count} 条字幕", count=len(result.cues)))
         for path in result.outputs:
             self._log(f"    {path}")
+        for path in result.replaced:
+            self._log("    " + t("↻ 已替换旧字幕 {path}", path=path))
 
     def _on_load_failed(self, error):
         self._log(t("✗ 模型加载失败：{error}", error=error))
@@ -703,6 +723,7 @@ class MainWindow(QWidget):
         self.notes.stop()
         self._set_running(False)
         self._sync_layout_enabled()
+        self._sync_source_enabled()
         self.bar.setValue(0)
         self._reset_bar()
 

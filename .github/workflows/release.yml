@@ -127,6 +127,26 @@ jobs:
             throw "日志里有异常堆栈"
           }
 
+          # 锁定源语言 + 双语命名：上次识别错留下的那份该被这次顶掉
+          "上次识别错的" | Out-File -Encoding utf8 "out/jfk.ja-zh.srt"
+          $p = Start-Process $exe -Wait -PassThru -ArgumentList `
+            "tests/data/jfk.flac","--model","tiny","--language","en","--target","zh",`
+            "--layout","bilingual","--model-dir","models","--output-dir","out"
+          if ($p.ExitCode -ne 0) { throw "锁定源语言跑不完整条流水线，退出码 $($p.ExitCode)" }
+          if (-not (Test-Path "out/jfk.en-zh.srt")) { throw "双语字幕没写出来" }
+          if (Test-Path "out/jfk.ja-zh.srt") { throw "上次识别错留下的旧字幕没被替换掉" }
+          if (-not (Select-String -Path "smoke/subtitle-tool.log" -Pattern "语种 en" -Quiet)) {
+            throw "--language 没传到转写那一步"
+          }
+          if (-not (Select-String -Path "smoke/subtitle-tool.log" -Pattern "替换旧字幕" -Quiet)) {
+            throw "替换掉的旧字幕没记进日志"
+          }
+
+          # 源语种打错字要当场拒绝，不该等解码完几十分钟才在模型层炸
+          $p = Start-Process $exe -Wait -PassThru -ArgumentList `
+            "tests/data/jfk.flac","--language","klingon","--target","zh"
+          if ($p.ExitCode -ne 2) { throw "不存在的源语种码没被拒绝，退出码 $($p.ExitCode)" }
+
           # 覆盖升级：旧版残留该被清掉，清完还得能正常跑
           "旧版残留" | Out-File "smoke/_internal/leftover-from-old-version.dll"
           Remove-Item "smoke/_internal/cleaned.txt"

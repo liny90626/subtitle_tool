@@ -118,6 +118,9 @@ _TABLE = (
     ("haw", None, "haw", "夏威夷语", "Hawaiian"),
 )
 
+#: 全部 Whisper 识别码。文件名里的语种后缀就是从这里来的
+WHISPER_CODES = tuple(w for w, *_ in _TABLE if w)
+
 #: Whisper 识别码 -> FLORES-200 翻译码
 WHISPER_TO_FLORES = {w: f for w, f, _, _, _ in _TABLE if w and f}
 
@@ -167,6 +170,11 @@ def describe_tag(tag):
 def target_choices():
     """可选翻译目标语种，按语种名排序，返回 ``[(flores 码, 语种名), ...]``。"""
     return sorted(_FLORES_NAMES[language()].items(), key=lambda kv: kv[1])
+
+
+def source_choices():
+    """可指定的源语种，按语种名排序，返回 ``[(whisper 码, 语种名), ...]``。"""
+    return sorted(_WHISPER_NAMES[language()].items(), key=lambda kv: kv[1])
 
 
 _SHORT_CODES = {f: w for w, f in WHISPER_TO_FLORES.items()}

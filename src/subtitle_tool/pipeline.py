@@ -10,7 +10,7 @@ from . import runtime
 from .asr import Transcriber, default_model
 from .audio import AudioTrack, decode_track, probe_tracks
 from .i18n import t
-from .languages import describe_whisper, flores_of, short_code
+from .languages import WHISPER_CODES, describe_whisper, flores_of, short_code
 from .subtitles import Cue, render, stretch_cues
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
 from .translate import Translator
@@ -42,6 +42,7 @@ class Result:
     language_spans: list[tuple[float, float, str]] = field(default_factory=list)
     cues: list[Cue] = field(default_factory=list)
     outputs: list[str] = field(default_factory=list)
+    replaced: list[str] = field(default_factory=list)  #: 被这次结果顶掉的旧字幕
 
 
 class Engine:
@@ -186,10 +187,10 @@ class Engine:
             )
 
         cues = _build_cues(segments, translations, options.layout)
-        outputs = _write(path, cues, options, source)
+        outputs, replaced = _write(path, cues, options, source)
         reporter.done("写出文件")
         runtime.trace(f"完成 {name}，{len(cues)} 条字幕")
-        return Result(path, track, source, _spans(segments), cues, outputs)
+        return Result(path, track, source, _spans(segments), cues, outputs, replaced)
 
     def _translate(self, segments, target, progress, cancel):
         """按源语种分组翻译——多语种音轨里每组的源语言码不同。"""
@@ -281,18 +282,24 @@ def _build_cues(segments, translations, layout) -> list[Cue]:
     return stretch_cues(cues)
 
 
-def _write(path, cues, options: Options, source) -> list[str]:
+def _tag(source, target, layout) -> str:
+    """字幕文件名里的语种后缀。"""
+    if target is None or layout == "source":
+        return source
+    if layout == "bilingual":
+        return f"{source}-{target}"
+    return target
+
+
+def _write(path, cues, options: Options, source) -> tuple[list[str], list[str]]:
+    """写出字幕，返回 ``(这次写的, 被顶掉的旧字幕)``。"""
     directory = options.output_dir or os.path.dirname(os.path.abspath(path))
     stem = os.path.splitext(os.path.basename(path))[0]
     target = short_code(options.target_language) if options.target_language else None
-    if target is None or options.layout == "source":
-        tag = source
-    elif options.layout == "bilingual":
-        tag = f"{source}-{target}"
-    else:
-        tag = target
+    tag = _tag(source, target, options.layout)
 
     os.makedirs(directory, exist_ok=True)
+    replaced = _drop_superseded(directory, stem, tag, target, options)
     outputs = []
     for fmt in options.formats:
         out = os.path.join(directory, f"{stem}.{tag}.{fmt}")
@@ -302,7 +309,33 @@ def _write(path, cues, options: Options, source) -> list[str]:
         with open(out, "w", encoding=encoding, newline="\n") as handle:
             handle.write(render(cues, fmt))
         outputs.append(out)
-    return outputs
+    return outputs, replaced
+
+
+def _drop_superseded(directory, stem, tag, target, options) -> list[str]:
+    """删掉上一次为同一个视频写出、只是源语种识别得不一样的那批旧字幕。
+
+    文件名里带源语种时，识别结果一变文件名就跟着变：新的写在旁边，旧的留在原地，
+    播放器还可能优先加载旧的那份——看着就像「没有覆盖」。
+
+    只对 ``源-目标`` 这种双语文件名动手。单段的文件名认不出是谁：``movie.zh.srt``
+    既可能是上次识别成中文的原文字幕，也可能是译成中文的译文字幕，删错了就是把用户
+    等了半小时的东西弄没。只要译文的文件名本来就不含源语种，同名直接覆盖，轮不到这里。
+    """
+    if target is None or options.layout != "bilingual":
+        return []
+    dropped = []
+    for code in WHISPER_CODES:
+        stale = _tag(code, target, options.layout)
+        if stale == tag:
+            continue
+        for fmt in options.formats:
+            old = os.path.join(directory, f"{stem}.{stale}.{fmt}")
+            if os.path.isfile(old):
+                os.remove(old)
+                runtime.trace(f"替换旧字幕 {old}")
+                dropped.append(old)
+    return dropped
 
 
 def _spans(segments) -> list[tuple[float, float, str]]:

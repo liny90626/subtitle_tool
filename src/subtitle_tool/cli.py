@@ -7,7 +7,14 @@ from . import __version__, hub, i18n, runtime, settings, worker
 from .asr import MODEL_SIZES, default_model
 from .audio import probe_tracks
 from .i18n import t
-from .languages import describe_whisper, flores_name, resolve_target, target_choices
+from .languages import (
+    WHISPER_CODES,
+    describe_whisper,
+    flores_name,
+    resolve_target,
+    source_choices,
+    target_choices,
+)
 from .pipeline import LAYOUTS, Options
 from .subtitles import FORMATS
 from .translate import DEFAULT_MODEL as DEFAULT_TRANSLATE_MODEL
@@ -24,7 +31,7 @@ def build_parser():
     )
     parser.add_argument("videos", nargs="*", help=t("视频/音频文件，可传多个"))
     parser.add_argument("--list-tracks", action="store_true", help=t("只列出音轨信息后退出"))
-    parser.add_argument("--list-languages", action="store_true", help=t("列出可选目标语种后退出"))
+    parser.add_argument("--list-languages", action="store_true", help=t("列出可选语种后退出"))
     parser.add_argument(
         "--track", type=int, default=1, help=t("使用第几条音轨，从 1 开始（默认 1）")
     )
@@ -83,8 +90,12 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.list_languages:
+        print(t("源语种（--language）："))
+        for code, name in source_choices():
+            print(f"  {code:12s} {name}")
+        print(t("目标语种（--target）："))
         for flores, name in target_choices():
-            print(f"{flores:12s} {name}")
+            print(f"  {flores:12s} {name}")
         return 0
 
     if not args.videos:
@@ -104,6 +115,16 @@ def main(argv=None) -> int:
                     )
                 )
         return 0
+
+    if args.language and args.language not in WHISPER_CODES:
+        print(
+            t(
+                "无法识别的源语种：{value}（用 --list-languages 查看可选值）",
+                value=args.language,
+            ),
+            file=sys.stderr,
+        )
+        return 2
 
     target = None
     if args.target:
@@ -170,6 +191,8 @@ def _run(jobs, setup, args, target) -> int:
         _overwrite("  " + _summary(result, args.multi_language, target))
         for out in result.outputs:
             print(f"  ✓ {out}")
+        for old_path in result.replaced:
+            print("  " + t("↻ 已替换旧字幕 {path}", path=old_path))
 
     def failure(row, message):
         heading(row)

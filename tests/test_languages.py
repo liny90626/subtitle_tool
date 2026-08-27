@@ -38,3 +38,20 @@ def test_every_flores_target_is_unique():
 def test_language_names_are_unique_within_each_language():
     for names in (L._FLORES_NAMES["zh"], L._FLORES_NAMES["en"]):
         assert len(set(names.values())) == len(names)
+
+
+def test_source_choices_cover_every_whisper_code_and_follow_the_interface():
+    from subtitle_tool import i18n
+
+    codes = [code for code, _ in L.source_choices()]
+    assert sorted(codes) == sorted(L.WHISPER_CODES)
+    # NLLB 翻不了的语种照样能当源语言，别在这儿把它们漏掉
+    assert "la" in codes
+    assert dict(L.source_choices())["ja"] == "日语"
+    i18n.use("en")
+    assert dict(L.source_choices())["ja"] == "Japanese"
+
+
+def test_source_choices_are_sorted_by_name():
+    names = [name for _, name in L.source_choices()]
+    assert names == sorted(names)

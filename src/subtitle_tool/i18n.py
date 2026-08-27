@@ -76,7 +76,8 @@ _ENGLISH = {
     "（检测到 NVIDIA 显卡）": "(NVIDIA GPU detected)",
     "（未检测到显卡，用 CPU）": "(no GPU detected, using CPU)",
     "源语言": "Source language",
-    "自动识别": "Detected automatically",
+    "自动识别": "Auto-detect",
+    "↻ 已替换旧字幕 {path}": "↻ Replaced old subtitle {path}",
     "音轨里多种语言混说，逐段识别（会慢一些）": (
         "The track mixes languages; detect per segment (slower)"
     ),
@@ -210,7 +211,12 @@ _ENGLISH = {
     ),
     "视频/音频文件，可传多个": "Video/audio files; several may be given",
     "只列出音轨信息后退出": "List the audio tracks and exit",
-    "列出可选目标语种后退出": "List the available target languages and exit",
+    "列出可选语种后退出": "List the available languages and exit",
+    "源语种（--language）：": "Source languages (--language):",
+    "目标语种（--target）：": "Target languages (--target):",
+    "无法识别的源语种：{value}（用 --list-languages 查看可选值）": (
+        "Unknown source language: {value} (run --list-languages to see the options)"
+    ),
     "使用第几条音轨，从 1 开始（默认 1）": "Which audio track to use, starting at 1 (default 1)",
     "识别模型（按当前设备默认 {default}）": "Speech model ({default} by default on this device)",
     "推理设备（默认自动）": "Inference device (auto by default)",

@@ -59,12 +59,12 @@ def test_output_filenames_encode_the_languages(tmp_path):
     cues = _build_cues([Segment(0, 1, "hi", "en")], ["你好"], "target")
     base = Options(output_dir=str(tmp_path), formats=("srt", "vtt"))
 
-    target = _write(
+    target, _ = _write(
         "/x/movie.mkv", cues, Options(**{**vars(base), "target_language": "zho_Hans"}), "en"
     )
     assert [os.path.basename(p) for p in target] == ["movie.zh.srt", "movie.zh.vtt"]
 
-    bilingual = _write(
+    bilingual, _ = _write(
         "/x/movie.mkv",
         cues,
         Options(**{**vars(base), "target_language": "zho_Hans", "layout": "bilingual"}),
@@ -72,17 +72,82 @@ def test_output_filenames_encode_the_languages(tmp_path):
     )
     assert os.path.basename(bilingual[0]) == "movie.en-zh.srt"
 
-    plain = _write("/x/movie.mkv", cues, base, "en")
+    plain, _ = _write("/x/movie.mkv", cues, base, "en")
     assert os.path.basename(plain[0]) == "movie.en.srt"
 
 
 def test_srt_gets_a_bom_but_vtt_does_not(tmp_path):
     cues = _build_cues([Segment(0, 1, "hi", "en")], None, "source")
     options = Options(output_dir=str(tmp_path), formats=("srt", "vtt"))
-    srt, vtt = _write("/x/movie.mkv", cues, options, "en")
+    (srt, vtt), _ = _write("/x/movie.mkv", cues, options, "en")
     # Windows 上不少播放器靠 BOM 认 UTF-8
     assert open(srt, "rb").read(3) == b"\xef\xbb\xbf"
     assert open(vtt, "rb").read(3) != b"\xef\xbb\xbf"
+
+
+def test_same_name_subtitle_is_overwritten(tmp_path):
+    cues = _build_cues([Segment(0, 1, "hi", "en")], None, "source")
+    options = Options(output_dir=str(tmp_path), formats=("srt",))
+    (tmp_path / "movie.en.srt").write_text("旧内容", encoding="utf-8")
+
+    (srt,), replaced = _write("/x/movie.mkv", cues, options, "en")
+
+    assert replaced == []  # 名字一样，直接被写没了，谈不上「替换掉另一个文件」
+    assert "旧内容" not in open(srt, encoding="utf-8-sig").read()
+
+
+def test_bilingual_output_replaces_the_previous_source_language(tmp_path):
+    """上次识别成英语写了 movie.en-zh.srt，这次识别成日语——旧的那份不该留在原地。"""
+    cues = _build_cues([Segment(0, 1, "hi", "ja")], ["你好"], "bilingual")
+    options = Options(
+        output_dir=str(tmp_path),
+        target_language="zho_Hans",
+        layout="bilingual",
+        formats=("srt", "vtt"),
+    )
+    stale = [tmp_path / "movie.en-zh.srt", tmp_path / "movie.en-zh.vtt"]
+    for path in stale:
+        path.write_text("上一次识别错了的", encoding="utf-8")
+
+    outputs, replaced = _write("/x/movie.mkv", cues, options, "ja")
+
+    assert [os.path.basename(p) for p in outputs] == ["movie.ja-zh.srt", "movie.ja-zh.vtt"]
+    assert sorted(replaced) == sorted(str(p) for p in stale)
+    assert not any(p.exists() for p in stale)
+
+
+def test_cleanup_never_touches_subtitles_it_did_not_name(tmp_path):
+    """别处来的字幕拼不出本工具的文件名，一个都不该被碰。"""
+    cues = _build_cues([Segment(0, 1, "hi", "ja")], ["你好"], "bilingual")
+    options = Options(
+        output_dir=str(tmp_path), target_language="zho_Hans", layout="bilingual", formats=("srt",)
+    )
+    others = [
+        tmp_path / "movie.srt",  # 播放器默认加载的那份，没有语种后缀
+        tmp_path / "movie.chs.srt",  # 别的工具的命名习惯
+        tmp_path / "movie.zh.srt",  # 之前「只要译文」跑出来的
+        tmp_path / "other.en-zh.srt",  # 另一个视频的
+    ]
+    for path in others:
+        path.write_text("别动我", encoding="utf-8")
+
+    _, replaced = _write("/x/movie.mkv", cues, options, "ja")
+
+    assert replaced == []
+    assert all(p.read_text(encoding="utf-8") == "别动我" for p in others)
+
+
+def test_translated_subtitle_is_never_deleted_by_a_source_only_run(tmp_path):
+    """movie.zh.srt 可能是译文也可能是原文，单看文件名分不清，所以一律不动。"""
+    cues = _build_cues([Segment(0, 1, "hi", "en")], None, "source")
+    options = Options(output_dir=str(tmp_path), formats=("srt",))
+    translated = tmp_path / "movie.zh.srt"
+    translated.write_text("等了半小时的译文", encoding="utf-8")
+
+    _, replaced = _write("/x/movie.mkv", cues, options, "en")
+
+    assert replaced == []
+    assert translated.read_text(encoding="utf-8") == "等了半小时的译文"
 
 
 @pytest.mark.parametrize("track", [-1, 5])
